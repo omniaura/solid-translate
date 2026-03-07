@@ -1,14 +1,24 @@
 # solid-translate
 
-AI-powered build-time translations for SolidJS. Write your app in one language, and let AI generate translations for all your target locales automatically.
+AI-powered i18n for SolidJS — full feature parity with [General Translation](https://generaltranslation.com), but open-source and BYOK (bring your own API key).
 
-## How it works
+Write your app in one language. Wrap text in `<T>`. Get translations generated automatically at build time. No JSON key management. No external service required.
 
-1. Write your app normally — keep all copy in your source language
-2. Wrap translatable text in `<T>` components
-3. Maintain a source locale JSON file with your strings
-4. The Vite plugin uses AI to translate to your target locales at build time
-5. Translation files get checked into your repo — no API calls on rebuild unless source text changes
+## Features
+
+- **`<T>` Component** — wrap any text for translation. Source text = key (no JSON wrangling)
+- **`<Var>`** — protect dynamic content from translation
+- **`<Num>`** — locale-aware number formatting via `Intl.NumberFormat`
+- **`<Currency>`** — locale-aware currency formatting
+- **`<DateTime>`** — locale-aware date/time formatting
+- **`<Plural>`** — CLDR plural rules (zero/one/two/few/many/other)
+- **`<LocaleSelector>`** — drop-in locale picker component
+- **AI Context** — `context` prop for disambiguation ("Save" = save file vs. save money)
+- **Auto Locale Detection** — detects from `navigator.languages` when `locale` prop is omitted
+- **`msg()`** — mark strings for extraction outside of JSX
+- **CLI Tool** — translate JSON, Markdown, and MDX files from the command line
+- **Vite Plugin** — build-time translation with smart change detection
+- **BYOK** — use any [Vercel AI SDK](https://ai-sdk.dev/) provider (OpenRouter, OpenAI, Anthropic, Google, etc.)
 
 ## Install
 
@@ -19,19 +29,7 @@ bun add -d ai @ai-sdk/openai  # or any AI SDK provider
 
 ## Quick Start
 
-### 1. Create your source locale file
-
-```json
-// src/locales/en.json
-{
-  "greeting": "Welcome to our app!",
-  "nav.home": "Home",
-  "nav.about": "About Us",
-  "items.count": "You have {{count}} items"
-}
-```
-
-### 2. Configure the Vite plugin
+### 1. Configure the Vite plugin
 
 ```ts
 // vite.config.ts
@@ -40,7 +38,6 @@ import solidPlugin from "vite-plugin-solid";
 import { solidTranslate } from "solid-translate/vite";
 import { createOpenAI } from "@ai-sdk/openai";
 
-// Use OpenRouter, OpenAI, or any AI SDK provider
 const openrouter = createOpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY,
@@ -54,24 +51,24 @@ export default defineConfig({
       targetLocales: ["es", "fr", "de", "ja"],
       localesDir: "./src/locales",
       model: openrouter("openai/gpt-4o-mini"),
+      autoExtract: true, // auto-discover <T> and msg() strings
     }),
   ],
 });
 ```
 
-### 3. Set up the runtime
+### 2. Write your app
 
 ```tsx
-// App.tsx
-import { TranslationProvider, T, useTranslation } from "solid-translate";
+import { TranslationProvider, T, Var, Num, Plural, useTranslation, LocaleSelector } from "solid-translate";
 import translations from "virtual:solid-translate";
 
 function App() {
   return (
     <TranslationProvider
-      locale="es"
       sourceLocale="en"
       translations={translations}
+      // locale="es"  ← optional! auto-detects from browser if omitted
     >
       <Page />
     </TranslationProvider>
@@ -79,31 +76,44 @@ function App() {
 }
 
 function Page() {
-  const { t, locale, setLocale } = useTranslation();
+  const { t } = useTranslation();
+  const [count, setCount] = createSignal(3);
+  const userName = () => "Alice";
 
   return (
     <div>
       <h1><T>Welcome to our app!</T></h1>
-      <nav>
-        <a><T id="nav.home">Home</T></a>
-        <a><T id="nav.about">About Us</T></a>
-      </nav>
-      <p>{t("items.count", { count: 5 })}</p>
 
-      <select
-        value={locale()}
-        onChange={(e) => setLocale(e.target.value)}
-      >
-        <option value="en">English</option>
-        <option value="es">Español</option>
-        <option value="fr">Français</option>
-      </select>
+      {/* Dynamic content protected with <Var> */}
+      <p><T>Hello <Var>{userName()}</Var>, nice to see you!</T></p>
+
+      {/* AI context for disambiguation */}
+      <button><T context="save a document to disk">Save</T></button>
+
+      {/* Explicit key */}
+      <a><T id="nav.home">Home</T></a>
+
+      {/* Interpolation */}
+      <p>{t("items.count", { count: count() })}</p>
+
+      {/* Pluralization */}
+      <Plural n={count()}
+        zero="No items in your cart"
+        one="1 item in your cart"
+        other={`${count()} items in your cart`}
+      />
+
+      {/* Locale-aware number */}
+      <p>Total: <Num>{1234567.89}</Num></p>
+
+      {/* Locale switcher */}
+      <LocaleSelector labels={{ en: "English", es: "Español", fr: "Français" }} />
     </div>
   );
 }
 ```
 
-### 4. Build
+### 3. Build
 
 ```bash
 bun run build
@@ -113,81 +123,234 @@ On the first build, the plugin generates translation files:
 
 ```
 src/locales/
-├── en.json                    # Your source (checked in)
-├── es.json                    # AI-generated (checked in)
-├── fr.json                    # AI-generated (checked in)
-├── de.json                    # AI-generated (checked in)
-├── ja.json                    # AI-generated (checked in)
-└── .solid-translate.lock      # Tracks what's been translated (checked in)
+├── en.json                    # Source (auto-generated or manual)
+├── es.json                    # AI-generated
+├── fr.json                    # AI-generated
+├── de.json                    # AI-generated
+├── ja.json                    # AI-generated
+└── .solid-translate.lock      # Change tracking
 ```
 
-On subsequent builds, only changed/new keys are re-translated.
+On subsequent builds, only changed/new keys are re-translated. Check everything into git.
 
-## API
+## API Reference
 
-### `<T>` Component
+### Components
 
-Wrap text for translation. The children text serves as both the source text and the lookup key.
+#### `<T>` — Translatable Text
 
 ```tsx
-// Source text as key
+// Source text as key (no JSON file entry needed)
 <T>Hello world</T>
 
-// Explicit key with fallback text
+// Explicit key
 <T id="greeting">Hello world</T>
 
 // With interpolation
-<T id="welcome" params={{ name: userName() }}>
-  Hello {{name}}
-</T>
+<T params={{ name: userName() }}>Hello {{name}}</T>
+
+// AI context for disambiguation
+<T context="financial institution, not river bank">Bank</T>
+
+// Mixed JSX with Var
+<T>Welcome <Var>{userName()}</Var>, you have <Num>{count()}</Num> items</T>
 ```
 
-### `useTranslation()`
+#### `<Var>` — Variable Protection
 
-Access the translation context from any component.
+Marks dynamic content that should NOT be translated. When used inside `<T>`, the surrounding text is translated but `<Var>` content is preserved.
+
+```tsx
+<T>Hello <Var>{userName()}</Var></T>
+// Spanish: "Hola {userName()}"
+```
+
+#### `<Num>` — Number Formatting
+
+Locale-aware number formatting using `Intl.NumberFormat`.
+
+```tsx
+<Num>{1000000}</Num>                              // "1,000,000" (en) / "1.000.000" (de)
+<Num options={{ style: "percent" }}>{0.42}</Num>   // "42%"
+<Num options={{ notation: "compact" }}>{1500}</Num> // "1.5K"
+```
+
+#### `<Currency>` — Currency Formatting
+
+```tsx
+<Currency currency="USD">{29.99}</Currency>    // "$29.99" (en-US) / "29,99 $US" (fr)
+<Currency currency="EUR">{1000}</Currency>     // "€1,000.00" (en) / "1.000,00 €" (de)
+```
+
+#### `<DateTime>` — Date/Time Formatting
+
+```tsx
+<DateTime>{new Date()}</DateTime>
+<DateTime options={{ dateStyle: "long" }}>{new Date()}</DateTime>
+<DateTime options={{ hour: "numeric", minute: "numeric" }}>{Date.now()}</DateTime>
+```
+
+#### `<Plural>` — Pluralization (CLDR)
+
+Uses `Intl.PluralRules` for locale-correct plural forms.
+
+```tsx
+<Plural n={count()}
+  zero="No items"
+  one="1 item"
+  two="2 items"           // Used in Arabic, Welsh, etc.
+  few={`${count()} items`}  // Used in Polish, Czech, etc.
+  many={`${count()} items`} // Used in Arabic, etc.
+  other={`${count()} items`}
+/>
+```
+
+#### `<LocaleSelector>` — Locale Picker
+
+Drop-in `<select>` for switching locales.
+
+```tsx
+// Auto-generates display names via Intl.DisplayNames
+<LocaleSelector />
+
+// Custom labels
+<LocaleSelector labels={{ en: "English", es: "Español" }} />
+
+// Subset of locales
+<LocaleSelector locales={["en", "es"]} />
+```
+
+### Hooks
+
+#### `useTranslation()`
+
+Full translation context.
 
 ```tsx
 const { t, locale, setLocale, sourceLocale, availableLocales } = useTranslation();
 
-// Translate programmatically
-t("greeting")                          // "¡Bienvenido!"
-t("items.count", { count: 3 })         // "Tienes 3 elementos"
+t("greeting")                  // translated string
+t("items.count", { count: 3 }) // with interpolation
+locale()                       // "es"
+setLocale("fr")                // switch locale
+availableLocales()             // ["en", "es", "fr", ...]
+```
 
-// Read/switch locale
-locale()                               // "es"
-setLocale("fr")                        // Switch to French
+#### `useLocale()`
+
+Lightweight hook for just locale info.
+
+```tsx
+const { locale, setLocale, sourceLocale, availableLocales } = useLocale();
 ```
 
 ### `<TranslationProvider>`
 
-Provides translation context to your app.
+Root provider. Wraps your app.
 
 ```tsx
 <TranslationProvider
-  locale="es"                    // Initial locale
-  sourceLocale="en"              // Source locale (default: "en")
   translations={translations}    // Translation dictionaries
+  sourceLocale="en"              // Source locale (default: "en")
+  // locale="es"                 // Optional: explicit locale
+  //                             // If omitted, auto-detects from navigator.languages
 >
   {children}
 </TranslationProvider>
 ```
 
-### Vite Plugin Config
+### `msg()` — Shared Strings
+
+Mark strings for extraction outside of JSX. At build time, the Vite plugin extracts them. At runtime, use `t()` to translate.
+
+```tsx
+import { msg } from "solid-translate";
+
+// Mark for extraction (build-time)
+const SAVE = msg("Save changes");
+const DELETE = msg("Delete");
+
+// Translate at runtime
+function Toolbar() {
+  const { t } = useTranslation();
+  return (
+    <div>
+      <button>{t(SAVE)}</button>
+      <button>{t(DELETE)}</button>
+    </div>
+  );
+}
+```
+
+## Vite Plugin Config
 
 ```ts
 solidTranslate({
-  sourceLocale: "en",            // Source locale code (default: "en")
-  targetLocales: ["es", "fr"],   // Target locales to generate
-  localesDir: "./src/locales",   // Where locale files live (default: "./src/locales")
-  model: openai("gpt-4o-mini"), // Any Vercel AI SDK LanguageModelV1
-  systemPrompt: "...",           // Custom system prompt (optional)
+  sourceLocale: "en",            // Source locale (default: "en")
+  targetLocales: ["es", "fr"],   // Target locales
+  localesDir: "./src/locales",   // Locale files dir (default: "./src/locales")
+  model: openai("gpt-4o-mini"), // Any Vercel AI SDK model
+  systemPrompt: "...",           // Custom AI prompt (optional)
   batchSize: 50,                 // Keys per API call (default: 50)
+  autoExtract: true,             // Auto-extract <T> and msg() strings (default: false)
+  include: ["src/**/*.tsx"],     // Files to scan for extraction
 })
+```
+
+## CLI
+
+For translating locale files, JSON, Markdown, and MDX outside of the Vite build.
+
+```bash
+# Initialize config
+npx solid-translate init
+
+# Extract strings from source files
+npx solid-translate extract
+
+# Translate everything
+npx solid-translate translate
+```
+
+### CLI Config (`solid-translate.config.json`)
+
+```json
+{
+  "sourceLocale": "en",
+  "targetLocales": ["es", "fr", "de"],
+  "localesDir": "./src/locales",
+  "provider": "openrouter",
+  "model": "openai/gpt-4o-mini",
+  "batchSize": 50,
+  "include": ["src/**/*.tsx", "src/**/*.ts"],
+  "files": {
+    "json": {
+      "include": ["i18n/[locale]/*.json"]
+    },
+    "md": {
+      "include": ["docs/[locale]/**/*.md"]
+    },
+    "mdx": {
+      "include": ["content/[locale]/**/*.mdx"]
+    }
+  }
+}
+```
+
+The `[locale]` placeholder is replaced with each target locale. Source files are found by replacing `[locale]` with the source locale.
+
+### Environment Variables
+
+```bash
+OPENROUTER_API_KEY=...   # OpenRouter
+OPENAI_API_KEY=...       # OpenAI
+ANTHROPIC_API_KEY=...    # Anthropic
+GOOGLE_API_KEY=...       # Google AI
 ```
 
 ## Using with different AI providers
 
-The plugin accepts any [Vercel AI SDK](https://ai-sdk.dev/) compatible model:
+The plugin and CLI accept any [Vercel AI SDK](https://ai-sdk.dev/) compatible model:
 
 ```ts
 // OpenRouter (access to 100+ models)
@@ -211,6 +374,44 @@ import { google } from "@ai-sdk/google";
 const model = google("gemini-2.0-flash");
 ```
 
+## CI/CD Integration
+
+Add to your build script for automatic translations on every deploy:
+
+```json
+{
+  "scripts": {
+    "translate": "solid-translate translate",
+    "build": "bun run translate && vite build"
+  }
+}
+```
+
+Or in GitHub Actions:
+
+```yaml
+- name: Translate
+  env:
+    OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+  run: npx solid-translate translate
+
+- name: Build
+  run: bun run build
+```
+
+## How change detection works
+
+The `.solid-translate.lock` file tracks a content hash for each source key. On build:
+
+1. Source locale file is read and each value is hashed
+2. Hashes are compared against the lock file
+3. Only new or changed keys are sent to the AI for translation
+4. If a key's `context` prop changed, it's re-translated for better accuracy
+5. Unchanged translations are preserved from existing locale files
+6. Deleted source keys are removed from all target files
+
+This means you can safely check in all translation files. Rebuilds are free unless you change source text.
+
 ## TypeScript
 
 For the virtual module import, add to your `env.d.ts` or `vite-env.d.ts`:
@@ -222,17 +423,28 @@ declare module "virtual:solid-translate" {
 }
 ```
 
-## How change detection works
+## Comparison with General Translation (gt-react)
 
-The `.solid-translate.lock` file tracks a content hash for each source key. On build:
-
-1. Source locale file is read and each value is hashed
-2. Hashes are compared against the lock file
-3. Only new or changed keys are sent to the AI for translation
-4. Unchanged translations are preserved from existing locale files
-5. Deleted source keys are removed from all target files
-
-This means you can safely check in all translation files. Rebuilds are free unless you change source text.
+| Feature | gt-react | solid-translate |
+|---------|----------|-----------------|
+| `<T>` component | ✅ | ✅ |
+| `<Var>` variable protection | ✅ | ✅ |
+| `<Num>` number formatting | ✅ | ✅ |
+| `<Currency>` formatting | ✅ | ✅ |
+| `<DateTime>` formatting | ✅ | ✅ |
+| `<Plural>` CLDR rules | ✅ | ✅ |
+| `<LocaleSelector>` | ✅ | ✅ |
+| AI context disambiguation | ✅ | ✅ |
+| Auto locale detection | ✅ | ✅ |
+| Shared strings (`msg()`) | ✅ | ✅ |
+| CLI for JSON/MD/MDX | ✅ | ✅ |
+| CI/CD integration | ✅ | ✅ |
+| Zero refactoring | ✅ | ✅ |
+| BYOK (bring your own key) | ❌ (SaaS) | ✅ |
+| No vendor lock-in | ❌ | ✅ |
+| SolidJS native | ❌ (React) | ✅ |
+| Build-time translation | ❌ (runtime) | ✅ |
+| Open source | Partial | ✅ MIT |
 
 ## License
 

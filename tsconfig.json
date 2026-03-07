@@ -5,6 +5,7 @@
     "module": "Preserve",
     "moduleDetection": "force",
     "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "allowJs": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

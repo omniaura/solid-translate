@@ -21,8 +21,8 @@ const RESOLVED_VIRTUAL_MODULE_ID = "\0" + VIRTUAL_MODULE_ID;
  * Vite plugin for solid-translate.
  *
  * Handles:
- * 1. Optional extraction of <T> strings from source files
- * 2. AI translation of source locale to target locales
+ * 1. Optional extraction of <T>, msg() strings from source files
+ * 2. AI translation of source locale to target locales (with context support)
  * 3. Lock file management for efficient re-translation
  * 4. Virtual module serving translations at runtime
  */
@@ -34,6 +34,8 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
     model,
     systemPrompt,
     batchSize = 50,
+    autoExtract = false,
+    include = ["src/**/*.tsx", "src/**/*.ts", "src/**/*.jsx"],
   } = config;
 
   let root: string;
@@ -55,17 +57,60 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
         mkdirSync(resolvedLocalesDir, { recursive: true });
       }
 
-      // Read source locale file
       const sourceFilePath = join(
         resolvedLocalesDir,
         `${sourceLocale}.json`,
       );
+
+      // Auto-extraction: scan source files for <T> and msg() strings
+      let contexts: Record<string, string> = {};
+      if (autoExtract) {
+        const extracted = await autoExtractStrings(root, include);
+        contexts = extracted.contexts;
+
+        // Merge into source locale file
+        let existingSource: Record<string, string> = {};
+        if (existsSync(sourceFilePath)) {
+          try {
+            existingSource = JSON.parse(
+              readFileSync(sourceFilePath, "utf-8"),
+            );
+          } catch {
+            // start fresh
+          }
+        }
+
+        let changed = false;
+        for (const [key, value] of Object.entries(extracted.strings)) {
+          if (!(key in existingSource)) {
+            existingSource[key] = value;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          const sorted = Object.fromEntries(
+            Object.entries(existingSource).sort(([a], [b]) =>
+              a.localeCompare(b),
+            ),
+          );
+          writeFileSync(
+            sourceFilePath,
+            JSON.stringify(sorted, null, 2) + "\n",
+          );
+          console.log(
+            `[solid-translate] Auto-extracted ${Object.keys(extracted.strings).length} strings from source`,
+          );
+        }
+      }
+
+      // Read source locale file
       if (!existsSync(sourceFilePath)) {
         console.warn(
           `[solid-translate] Source locale file not found: ${relative(root, sourceFilePath)}`,
         );
         console.warn(
-          `[solid-translate] Create it with your source strings, e.g.: { "greeting": "Hello!" }`,
+          `[solid-translate] Create it with your source strings, or enable autoExtract`,
         );
         return;
       }
@@ -89,9 +134,17 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
       for (const [key, value] of Object.entries(sourceDict)) {
         const hash = hashContent(value);
         const existing = lock.keys[key];
-        if (!existing || existing.hash !== hash) {
+        const existingContext = existing?.context;
+        const newContext = contexts[key];
+
+        // Re-translate if content changed OR context changed
+        if (
+          !existing ||
+          existing.hash !== hash ||
+          existingContext !== newContext
+        ) {
           changedKeys[key] = value;
-          lock.keys[key] = { hash, source: value };
+          lock.keys[key] = { hash, source: value, context: newContext };
         }
       }
 
@@ -103,7 +156,9 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
       }
 
       if (Object.keys(changedKeys).length === 0) {
-        console.log("[solid-translate] No changes detected, skipping translation.");
+        console.log(
+          "[solid-translate] No changes detected, skipping translation.",
+        );
         return;
       }
 
@@ -111,6 +166,13 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
       console.log(
         `[solid-translate] Translating ${count} key${count > 1 ? "s" : ""} to ${targetLocales.length} locale${targetLocales.length > 1 ? "s" : ""}...`,
       );
+
+      // Build context map for changed keys
+      const changedContexts: Record<string, string> = {};
+      for (const key of Object.keys(changedKeys)) {
+        const ctx = lock.keys[key]?.context;
+        if (ctx) changedContexts[key] = ctx;
+      }
 
       // Translate for each target locale
       for (const targetLocale of targetLocales) {
@@ -142,6 +204,7 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
               targetLocale,
               sourceLocale,
               systemPrompt,
+              changedContexts,
             );
             Object.assign(existing, translated);
           } catch (err) {
@@ -164,7 +227,10 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
           Object.entries(existing).sort(([a], [b]) => a.localeCompare(b)),
         );
 
-        writeFileSync(targetFilePath, JSON.stringify(sorted, null, 2) + "\n");
+        writeFileSync(
+          targetFilePath,
+          JSON.stringify(sorted, null, 2) + "\n",
+        );
         console.log(
           `[solid-translate] ${targetLocale}: ${Object.keys(sorted).length} keys`,
         );
@@ -189,6 +255,7 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
         if (existsSync(resolvedLocalesDir)) {
           for (const file of readdirSync(resolvedLocalesDir)) {
             if (!file.endsWith(".json")) continue;
+            if (file.startsWith(".")) continue;
             const locale = file.replace(".json", "");
             const filePath = join(resolvedLocalesDir, file);
             try {
@@ -224,3 +291,41 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
 }
 
 export default solidTranslate;
+
+// ---------------------------------------------------------------------------
+// Auto-extraction helper
+// ---------------------------------------------------------------------------
+
+async function autoExtractStrings(
+  root: string,
+  patterns: string[],
+): Promise<{ strings: Record<string, string>; contexts: Record<string, string> }> {
+  const strings: Record<string, string> = {};
+  const contexts: Record<string, string> = {};
+
+  // Dynamically import glob for file matching
+  const { glob } = await import("glob");
+
+  for (const pattern of patterns) {
+    const files = await glob(pattern, { cwd: root, absolute: true });
+    for (const file of files) {
+      try {
+        const code = readFileSync(file, "utf-8");
+        const extracted = extractStringsFromSource(
+          code,
+          relative(root, file),
+        );
+        for (const entry of extracted) {
+          strings[entry.key] = entry.source;
+          if (entry.context) {
+            contexts[entry.key] = entry.context;
+          }
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  }
+
+  return { strings, contexts };
+}

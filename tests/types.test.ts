@@ -5,6 +5,7 @@ import type {
   Translations,
   LockFile,
   LockFileEntry,
+  CLIConfig,
 } from "../src/types";
 
 describe("types", () => {
@@ -37,5 +38,33 @@ describe("types", () => {
     };
     expect(lock.version).toBe(1);
     expect(lock.keys["greeting"]!.hash).toBe("abc123");
+  });
+
+  test("LockFileEntry supports optional context", () => {
+    const entry: LockFileEntry = {
+      hash: "abc123",
+      source: "Save",
+      context: "Save a document to disk",
+    };
+    expect(entry.context).toBe("Save a document to disk");
+  });
+
+  test("CLIConfig has correct shape", () => {
+    const config: CLIConfig = {
+      sourceLocale: "en",
+      targetLocales: ["es", "fr"],
+      localesDir: "./locales",
+      provider: "openai",
+      model: "gpt-4o-mini",
+      batchSize: 50,
+      files: {
+        json: { include: ["i18n/[locale]/*.json"] },
+        md: { include: ["docs/[locale]/**/*.md"] },
+        mdx: { include: [] },
+      },
+      include: ["src/**/*.tsx"],
+    };
+    expect(config.targetLocales).toHaveLength(2);
+    expect(config.files?.json?.include).toHaveLength(1);
   });
 });

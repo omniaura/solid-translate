@@ -29,7 +29,7 @@ describe("extractStringsFromSource", () => {
     `;
     const result = extractStringsFromSource(code, "page.tsx");
     expect(result).toHaveLength(3);
-    expect(result.map((r) => r.key)).toEqual(["nav.home", "Welcome", "Goodbye"]);
+    expect(result.map((r) => r.key)).toEqual(["Welcome", "Goodbye", "nav.home"]);
   });
 
   test("deduplicates identical strings", () => {

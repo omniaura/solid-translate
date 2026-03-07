@@ -1,11 +1,14 @@
 {
   "name": "solid-translate",
-  "version": "0.1.0",
-  "description": "AI-powered build-time translations for SolidJS. Write your app, wrap text in <T>, and get translations generated automatically.",
+  "version": "0.2.0",
+  "description": "AI-powered build-time translations for SolidJS. Full i18n with <T>, <Var>, <Num>, <Currency>, <Plural>, <DateTime>, locale detection, and a CLI — all BYOK.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "solid-translate": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -40,7 +43,14 @@
     "vite-plugin",
     "build-time",
     "openrouter",
-    "vercel-ai-sdk"
+    "vercel-ai-sdk",
+    "general-translation",
+    "gt-react",
+    "pluralization",
+    "intl",
+    "locale",
+    "currency",
+    "datetime"
   ],
   "license": "MIT",
   "author": "omniaura",
@@ -66,6 +76,7 @@
     }
   },
   "dependencies": {
+    "glob": "^11.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
