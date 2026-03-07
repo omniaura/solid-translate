@@ -1,0 +1,81 @@
+{
+  "name": "solid-translate",
+  "version": "0.1.0",
+  "description": "AI-powered build-time translations for SolidJS. Write your app, wrap text in <T>, and get translations generated automatically.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "solid",
+    "solidjs",
+    "i18n",
+    "translate",
+    "translation",
+    "internationalization",
+    "localization",
+    "ai",
+    "vite",
+    "vite-plugin",
+    "build-time",
+    "openrouter",
+    "vercel-ai-sdk"
+  ],
+  "license": "MIT",
+  "author": "omniaura",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omniaura/solid-translate.git"
+  },
+  "homepage": "https://github.com/omniaura/solid-translate#readme",
+  "bugs": {
+    "url": "https://github.com/omniaura/solid-translate/issues"
+  },
+  "peerDependencies": {
+    "solid-js": ">=1.7.0",
+    "vite": ">=4.0.0",
+    "ai": ">=3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^16.0.0",
+    "@types/bun": "latest",
+    "ai": "^4.0.0",
+    "semantic-release": "25",
+    "solid-js": "^1.8.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.0.0"
+  }
+}
