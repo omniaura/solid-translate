@@ -18,6 +18,7 @@ Write your app in one language. Wrap text in `<T>`. Get translations generated a
 - **`msg()`** — mark strings for extraction outside of JSX
 - **CLI Tool** — translate JSON, Markdown, and MDX files from the command line
 - **Vite Plugin** — build-time translation with smart change detection
+- **GitHub Action** — `omniaura/solid-translate@v1` for CI/CD translation automation
 - **BYOK** — use any [Vercel AI SDK](https://ai-sdk.dev/) provider (OpenRouter, OpenAI, Anthropic, Google, etc.)
 
 ## Install
@@ -376,6 +377,90 @@ const model = google("gemini-2.0-flash");
 
 ## CI/CD Integration
 
+### GitHub Action
+
+Use the official action to keep translations up to date automatically:
+
+```yaml
+# .github/workflows/translate.yml
+name: Translate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: omniaura/solid-translate@v1
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        with:
+          commit: true
+          commit-message: "chore: update translations"
+```
+
+#### Action Inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `command` | `both` | `extract`, `translate`, or `both` |
+| `working-directory` | `.` | Working directory |
+| `commit` | `false` | Auto-commit updated translation files |
+| `commit-message` | `chore: update translations` | Commit message |
+| `node-version` | `22` | Node.js version |
+| `package-manager` | `npm` | `npm`, `bun`, `pnpm`, or `yarn` |
+
+#### Action Outputs
+
+| Output | Description |
+|--------|-------------|
+| `changed` | `true` if translation files were updated |
+| `files` | Space-separated list of changed files |
+
+#### Examples
+
+**Translate on PR and commit back:**
+
+```yaml
+- uses: omniaura/solid-translate@v1
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  with:
+    commit: true
+    package-manager: bun
+```
+
+**Extract only (no AI calls):**
+
+```yaml
+- uses: omniaura/solid-translate@v1
+  with:
+    command: extract
+```
+
+**Use output in subsequent steps:**
+
+```yaml
+- uses: omniaura/solid-translate@v1
+  id: translate
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+- name: Create PR with translations
+  if: steps.translate.outputs.changed == 'true'
+  run: |
+    echo "Updated files: ${{ steps.translate.outputs.files }}"
+```
+
+### Manual CI Setup
+
 Add to your build script for automatic translations on every deploy:
 
 ```json
@@ -387,7 +472,7 @@ Add to your build script for automatic translations on every deploy:
 }
 ```
 
-Or in GitHub Actions:
+Or directly in a workflow:
 
 ```yaml
 - name: Translate
@@ -439,6 +524,7 @@ declare module "virtual:solid-translate" {
 | Shared strings (`msg()`) | ✅ | ✅ |
 | CLI for JSON/MD/MDX | ✅ | ✅ |
 | CI/CD integration | ✅ | ✅ |
+| Official GitHub Action | ❌ | ✅ |
 | Zero refactoring | ✅ | ✅ |
 | BYOK (bring your own key) | ❌ (SaaS) | ✅ |
 | No vendor lock-in | ❌ | ✅ |

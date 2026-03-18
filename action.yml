@@ -1,0 +1,100 @@
+name: "solid-translate"
+description: "AI-powered translations for SolidJS apps. Extract and translate strings in CI."
+author: "omniaura"
+
+branding:
+  icon: "globe"
+  color: "blue"
+
+inputs:
+  command:
+    description: "Command to run: extract, translate, or both (default: both)"
+    required: false
+    default: "both"
+  working-directory:
+    description: "Working directory (default: repo root)"
+    required: false
+    default: "."
+  commit:
+    description: "Commit updated translation files (default: false)"
+    required: false
+    default: "false"
+  commit-message:
+    description: "Commit message for translation updates"
+    required: false
+    default: "chore: update translations"
+  node-version:
+    description: "Node.js version to use"
+    required: false
+    default: "22"
+  package-manager:
+    description: "Package manager: npm, bun, pnpm, or yarn"
+    required: false
+    default: "npm"
+
+outputs:
+  changed:
+    description: "Whether translation files were changed (true/false)"
+    value: ${{ steps.check-changes.outputs.changed }}
+  files:
+    description: "Space-separated list of changed translation files"
+    value: ${{ steps.check-changes.outputs.files }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Setup Bun
+      if: inputs.package-manager == 'bun'
+      uses: oven-sh/setup-bun@v2
+
+    - name: Install solid-translate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        case "${{ inputs.package-manager }}" in
+          bun)   bun add -d solid-translate ;;
+          pnpm)  pnpm add -D solid-translate ;;
+          yarn)  yarn add -D solid-translate ;;
+          *)     npm install -D solid-translate ;;
+        esac
+
+    - name: Run extract
+      if: inputs.command == 'extract' || inputs.command == 'both'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx solid-translate extract
+
+    - name: Run translate
+      if: inputs.command == 'translate' || inputs.command == 'both'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx solid-translate translate
+
+    - name: Check for changes
+      id: check-changes
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if git diff --name-only | grep -q '\.json$'; then
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "files=$(git diff --name-only | grep '\.json$' | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          echo "files=" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Commit changes
+      if: inputs.commit == 'true' && steps.check-changes.outputs.changed == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A '*.json' '.solid-translate.lock'
+        git commit -m "${{ inputs.commit-message }}"
+        git push
