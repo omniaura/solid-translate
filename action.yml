@@ -37,12 +37,34 @@ outputs:
     description: "Whether translation files were changed (true/false)"
     value: ${{ steps.check-changes.outputs.changed }}
   files:
-    description: "Space-separated list of changed translation files"
+    description: "Newline-separated list of changed translation files"
     value: ${{ steps.check-changes.outputs.files }}
 
 runs:
   using: "composite"
   steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        COMMAND: ${{ inputs.command }}
+        COMMIT: ${{ inputs.commit }}
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        case "$COMMAND" in
+          extract|translate|both) ;;
+          *) echo "Invalid command: $COMMAND" >&2; exit 1 ;;
+        esac
+
+        case "$COMMIT" in
+          true|false) ;;
+          *) echo "Invalid commit value: $COMMIT" >&2; exit 1 ;;
+        esac
+
+        case "$PACKAGE_MANAGER" in
+          npm|bun|pnpm|yarn) ;;
+          *) echo "Invalid package-manager: $PACKAGE_MANAGER" >&2; exit 1 ;;
+        esac
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
@@ -52,49 +74,96 @@ runs:
       if: inputs.package-manager == 'bun'
       uses: oven-sh/setup-bun@v2
 
-    - name: Install solid-translate
+    - name: Enable package manager shims
+      if: inputs.package-manager == 'pnpm' || inputs.package-manager == 'yarn'
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        case "${{ inputs.package-manager }}" in
-          bun)   bun add -d solid-translate ;;
-          pnpm)  pnpm add -D solid-translate ;;
-          yarn)  yarn add -D solid-translate ;;
-          *)     npm install -D solid-translate ;;
-        esac
+      run: corepack enable
 
     - name: Run extract
       if: inputs.command == 'extract' || inputs.command == 'both'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: npx solid-translate extract
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        case "$PACKAGE_MANAGER" in
+          bun)  bunx solid-translate extract ;;
+          pnpm) pnpm dlx solid-translate extract ;;
+          yarn) yarn dlx solid-translate extract ;;
+          npm)  npx --yes solid-translate extract ;;
+        esac
 
     - name: Run translate
       if: inputs.command == 'translate' || inputs.command == 'both'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: npx solid-translate translate
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        case "$PACKAGE_MANAGER" in
+          bun)  bunx solid-translate translate ;;
+          pnpm) pnpm dlx solid-translate translate ;;
+          yarn) yarn dlx solid-translate translate ;;
+          npm)  npx --yes solid-translate translate ;;
+        esac
 
     - name: Check for changes
       id: check-changes
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        if git diff --name-only | grep -q '\.json$'; then
+        mapfile -t files < <(
+          {
+            git diff --name-only -- \
+              '*.json' ':(glob)**/*.json' \
+              '*.md' ':(glob)**/*.md' \
+              '*.mdx' ':(glob)**/*.mdx' \
+              '.solid-translate.lock' ':(glob)**/.solid-translate.lock' \
+              ':(exclude)package.json' \
+              ':(exclude)package-lock.json' \
+              ':(exclude)bun.lock' \
+              ':(exclude)pnpm-lock.yaml' \
+              ':(exclude)yarn.lock'
+            git ls-files --others --exclude-standard -- \
+              '*.json' ':(glob)**/*.json' \
+              '*.md' ':(glob)**/*.md' \
+              '*.mdx' ':(glob)**/*.mdx' \
+              '.solid-translate.lock' ':(glob)**/.solid-translate.lock' \
+              ':(exclude)package.json' \
+              ':(exclude)package-lock.json' \
+              ':(exclude)bun.lock' \
+              ':(exclude)pnpm-lock.yaml' \
+              ':(exclude)yarn.lock'
+          } | sort -u
+        )
+
+        if [ "${#files[@]}" -gt 0 ]; then
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "files=$(git diff --name-only | grep '\.json$' | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          {
+            echo "files<<EOF"
+            printf '%s\n' "${files[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         else
           echo "changed=false" >> "$GITHUB_OUTPUT"
-          echo "files=" >> "$GITHUB_OUTPUT"
+          {
+            echo "files<<EOF"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         fi
 
     - name: Commit changes
       if: inputs.commit == 'true' && steps.check-changes.outputs.changed == 'true'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        TRANSLATION_FILES: ${{ steps.check-changes.outputs.files }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add -A '*.json' '.solid-translate.lock'
-        git commit -m "${{ inputs.commit-message }}"
+        while IFS= read -r file; do
+          [ -n "$file" ] && git add -- "$file"
+        done <<< "$TRANSLATION_FILES"
+        git commit -m "$COMMIT_MESSAGE"
         git push

@@ -388,7 +388,6 @@ name: Translate
 on:
   push:
     branches: [main]
-  pull_request:
 
 jobs:
   translate:
@@ -422,19 +421,37 @@ jobs:
 | Output | Description |
 |--------|-------------|
 | `changed` | `true` if translation files were updated |
-| `files` | Space-separated list of changed files |
+| `files` | Newline-separated list of changed translation files |
+
+The action reports and commits changes for JSON, Markdown, MDX, and `.solid-translate.lock` files only. Package manifests and package manager lockfiles are intentionally excluded.
 
 #### Examples
 
-**Translate on PR and commit back:**
+**Translate on push and commit back:**
+
+Use auto-commit only on trusted refs where `GITHUB_TOKEN` can push to the checked-out branch, such as `push` events on your own repository. For pull requests, leave `commit` disabled and use the `changed`/`files` outputs to decide whether to fail CI or open a separate update PR.
 
 ```yaml
-- uses: omniaura/solid-translate@v1
-  env:
-    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  with:
-    commit: true
-    package-manager: bun
+name: Translate
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: omniaura/solid-translate@v1
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          commit: true
+          package-manager: bun
 ```
 
 **Extract only (no AI calls):**
@@ -455,8 +472,10 @@ jobs:
 
 - name: Create PR with translations
   if: steps.translate.outputs.changed == 'true'
+  env:
+    TRANSLATION_FILES: ${{ steps.translate.outputs.files }}
   run: |
-    echo "Updated files: ${{ steps.translate.outputs.files }}"
+    printf 'Updated files:\n%s\n' "$TRANSLATION_FILES"
 ```
 
 ### Manual CI Setup
