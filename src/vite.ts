@@ -48,6 +48,7 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
     model,
     systemPrompt,
     batchSize = 50,
+    translate = true,
     autoExtract = false,
     include = ["src/**/*.tsx", "src/**/*.ts", "src/**/*.jsx"],
   } = config;
@@ -64,6 +65,18 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
     },
 
     async buildStart() {
+      // Serve-only mode: virtual modules read the committed locale files;
+      // extraction and translation are handled elsewhere (CLI/CI).
+      if (!translate) {
+        return;
+      }
+
+      if (!model) {
+        throw new Error(
+          "[solid-translate] `model` is required unless `translate: false` is set",
+        );
+      }
+
       // Ensure locales directory exists
       if (!existsSync(resolvedLocalesDir)) {
         mkdirSync(resolvedLocalesDir, { recursive: true });

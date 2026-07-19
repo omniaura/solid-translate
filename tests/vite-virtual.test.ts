@@ -89,3 +89,46 @@ describe("virtual modules", () => {
     ).toBeUndefined();
   });
 });
+
+describe("serve-only mode (translate: false)", () => {
+  test("buildStart is a no-op: no model needed, no files written", async () => {
+    const root = mkdtempSync(join(tmpdir(), "st-vite-serve-"));
+    dirs.push(root);
+    const localesDir = join(root, "locales");
+    mkdirSync(localesDir, { recursive: true });
+    writeFileSync(join(localesDir, "en.json"), JSON.stringify({ Hello: "Hello" }));
+
+    const plugin: any = solidTranslate({
+      sourceLocale: "en",
+      targetLocales: ["es"],
+      localesDir: "./locales",
+      translate: false,
+    });
+    plugin.configResolved({ root });
+    // Must not throw despite a stale/absent lock and no model
+    await plugin.buildStart();
+    // Virtual modules still serve the committed files
+    const resolved = plugin.resolveId("virtual:solid-translate");
+    expect(plugin.load(resolved)).toContain("Hola" === "Hola" ? "Hello" : "");
+    // No lock or target files were created
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(localesDir, ".solid-translate.lock"))).toBe(false);
+    expect(existsSync(join(localesDir, "es.json"))).toBe(false);
+  });
+
+  test("translating mode without model throws a clear error", async () => {
+    const root = mkdtempSync(join(tmpdir(), "st-vite-nomodel-"));
+    dirs.push(root);
+    const localesDir = join(root, "locales");
+    mkdirSync(localesDir, { recursive: true });
+    writeFileSync(join(localesDir, "en.json"), JSON.stringify({ Hello: "Hello" }));
+
+    const plugin: any = solidTranslate({
+      sourceLocale: "en",
+      targetLocales: ["es"],
+      localesDir: "./locales",
+    });
+    plugin.configResolved({ root });
+    await expect(plugin.buildStart()).rejects.toThrow(/model.*required/);
+  });
+});

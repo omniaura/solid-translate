@@ -8,8 +8,18 @@ export interface SolidTranslatePluginConfig {
   targetLocales: string[];
   /** Directory containing locale JSON files, relative to project root (default: "./src/locales") */
   localesDir?: string;
-  /** AI model to use for translations (any Vercel AI SDK LanguageModelV1) */
-  model: LanguageModelV1;
+  /**
+   * AI model to use for translations (any Vercel AI SDK LanguageModelV1).
+   * Required unless `translate` is `false`.
+   */
+  model?: LanguageModelV1;
+  /**
+   * When `false`, the plugin only serves the virtual translation modules
+   * from the committed locale JSON files — no extraction, no AI calls, no
+   * file writes. Use this to keep app builds hermetic and run extraction/
+   * translation exclusively through the CLI (e.g. in CI). Default: `true`.
+   */
+  translate?: boolean;
   /** Custom system prompt for the AI translator */
   systemPrompt?: string;
   /** Max keys per API call (default: 50) */
