@@ -3,7 +3,6 @@ import {
   useContext,
   createSignal,
   createMemo,
-  children as resolveChildren,
   type JSX,
 } from "solid-js";
 import {
@@ -277,39 +276,20 @@ export interface TProps {
  */
 export function T(props: TProps): JSX.Element {
   const ctx = useContext(TranslationContext);
-  const resolved = resolveChildren(() => props.children);
 
   return createMemo(() => {
-    const kids = resolved.toArray();
+    // IMPORTANT: children are read raw, WITHOUT resolveChildren(). The Solid
+    // compiler passes static text as plain strings and wraps every dynamic
+    // part (expressions, <Var>, <Num>, elements) in a function or object —
+    // that boundary is exactly what separates translatable text from {n}
+    // slots. Resolving children first would collapse dynamic strings into
+    // text and destroy the key.
+    const kids = flattenChildren(props.children);
 
     // No context — just render children
     if (!ctx) return kids.length === 1 ? kids[0] : kids;
 
-    // Simple case: single text child
-    if (kids.length === 1 && typeof kids[0] === "string") {
-      const key = props.id || (kids[0] as string);
-      return ctx.t(key, props.params);
-    }
-
-    // Explicit id with non-text children — translate via id
-    if (props.id) {
-      const translated = ctx.t(props.id, props.params);
-
-      // If translation is just text (no slot placeholders), return it
-      if (!/{(\d+)}/.test(translated)) return translated;
-
-      // Collect non-text children (Var, Num, etc.) as ordered slots
-      const slots: JSX.Element[] = [];
-      for (const kid of kids) {
-        if (typeof kid !== "string" && typeof kid !== "number") {
-          slots.push(kid as JSX.Element);
-        }
-      }
-
-      return interpolateSlots(translated, slots);
-    }
-
-    // Mixed children without explicit id — build a template key
+    // Build the template key + ordered slots from the raw children
     const slots: JSX.Element[] = [];
     let template = "";
     for (const kid of kids) {
@@ -317,14 +297,27 @@ export function T(props: TProps): JSX.Element {
         template += kid;
       } else if (typeof kid === "number") {
         template += String(kid);
+      } else if (kid == null || typeof kid === "boolean") {
+        // {null} / {undefined} / booleans render nothing
       } else {
         template += `{${slots.length}}`;
         slots.push(kid as JSX.Element);
       }
     }
 
-    const translated = ctx.t(template, props.params);
-    if (slots.length === 0) return translated;
+    // Leading/trailing whitespace is layout, not copy — keep it out of the
+    // key, restore it around the translation.
+    const lead = /^\s*/.exec(template)![0];
+    const rest = template.slice(lead.length);
+    const trail = /\s*$/.exec(rest)![0];
+    const body = rest.slice(0, rest.length - trail.length);
+
+    const key = props.id || body;
+    const translated = lead + ctx.t(key, props.params) + trail;
+
+    // If translation has no slot placeholders, return it as plain text
+    if (slots.length === 0 || !/{(\d+)}/.test(translated)) return translated;
+
     return interpolateSlots(translated, slots);
   }) as unknown as JSX.Element;
 }
@@ -332,6 +325,16 @@ export function T(props: TProps): JSX.Element {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Flatten (possibly nested) children arrays WITHOUT resolving functions */
+function flattenChildren(child: unknown, out: unknown[] = []): unknown[] {
+  if (Array.isArray(child)) {
+    for (const c of child) flattenChildren(c, out);
+  } else {
+    out.push(child);
+  }
+  return out;
+}
 
 /** Split a translated string by `{0}`, `{1}`, etc. and interleave with slots */
 function interpolateSlots(

@@ -144,11 +144,15 @@ export interface PluralProps {
 /**
  * Renders the appropriate plural form based on CLDR plural rules for the current locale.
  *
+ * String forms are translated through the translation dictionary (the source
+ * string is the key — matching extraction) and support an `{n}` placeholder
+ * interpolated with the count. Non-string forms render as-is, untranslated.
+ *
  * ```tsx
  * <Plural n={count()}
  *   zero="No items"
  *   one="1 item"
- *   other={`${count()} items`}
+ *   other="{n} items"
  * />
  * ```
  */
@@ -169,7 +173,14 @@ export function Plural(props: PluralProps): JSX.Element {
       other: props.other,
     };
 
-    return forms[category] ?? props.other;
+    const form = forms[category] ?? props.other;
+
+    // Translate string forms through the dictionary, keyed by source string
+    if (ctx && typeof form === "string") {
+      return ctx.t(form, { n: props.n });
+    }
+
+    return form;
   }) as unknown as JSX.Element;
 }
 

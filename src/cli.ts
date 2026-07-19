@@ -11,7 +11,10 @@ import {
 import { resolve, join, dirname, relative, basename } from "node:path";
 import { translateBatch, translateMarkdown } from "./translate.js";
 import { hashContent } from "./hash.js";
-import { extractStringsFromSource } from "./extract.js";
+import {
+  extractStringsFromSource,
+  type ExtractWarning,
+} from "./extract.js";
 import { syncLocaleFiles, formatSyncFailures } from "./lock.js";
 import type { CLIConfig, LockFile } from "./types.js";
 
@@ -188,6 +191,7 @@ async function runExtract() {
 
   const { glob } = await import("glob");
   const strings: Record<string, string> = {};
+  const warnings: ExtractWarning[] = [];
   let total = 0;
 
   for (const pattern of patterns) {
@@ -198,6 +202,7 @@ async function runExtract() {
         const extracted = extractStringsFromSource(
           code,
           relative(root, file),
+          warnings,
         );
         for (const entry of extracted) {
           strings[entry.key] = entry.source;
@@ -207,6 +212,10 @@ async function runExtract() {
         // skip unreadable
       }
     }
+  }
+
+  for (const w of warnings) {
+    console.warn(`warning: ${w.file}:${w.line} — ${w.message}`);
   }
 
   // Merge with existing source file

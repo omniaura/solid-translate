@@ -23,6 +23,7 @@ export default defineConfig([
     sourcemap: true,
     platform: "node",
     external: ["vite", "ai", "glob"],
+    noExternal: ["@babel/parser"],
   },
   // CLI entry (node) — npx solid-translate
   {
@@ -32,6 +33,7 @@ export default defineConfig([
     sourcemap: false,
     platform: "node",
     external: ["ai", "glob", "@ai-sdk/*"],
+    noExternal: ["@babel/parser"],
     banner: {
       js: "#!/usr/bin/env node",
     },
