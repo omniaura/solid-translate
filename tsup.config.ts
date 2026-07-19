@@ -1,7 +1,11 @@
 import { defineConfig } from "tsup";
+import { solidPlugin } from "esbuild-plugin-solid";
 
 export default defineConfig([
-  // Runtime entry (browser) — components, hooks, provider
+  // Runtime entry (browser) — components, hooks, provider.
+  // JSX is compiled with babel-preset-solid so dist ships plain JS that any
+  // bundler (or node) can parse — consumers must NOT need vite-plugin-solid
+  // configured to compile our package.
   {
     entry: { index: "src/index.ts" },
     format: ["esm"],
@@ -9,11 +13,8 @@ export default defineConfig([
     sourcemap: true,
     clean: true,
     platform: "browser",
-    external: ["solid-js"],
-    jsxFactory: "h",
-    esbuildOptions(options) {
-      options.jsx = "preserve";
-    },
+    external: ["solid-js", "solid-js/web"],
+    esbuildPlugins: [solidPlugin()],
   },
   // Vite plugin entry (node) — build-time translation
   {

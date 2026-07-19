@@ -94,6 +94,7 @@
     "@types/bun": "latest",
     "ai": "^4.0.0",
     "babel-preset-solid": "^1.9.12",
+    "esbuild-plugin-solid": "^0.6.0",
     "semantic-release": "25",
     "solid-js": "^1.8.0",
     "tsup": "^8.0.0",
