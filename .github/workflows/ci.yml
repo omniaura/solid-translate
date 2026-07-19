@@ -16,5 +16,7 @@ jobs:
       # bundling regressions that make the published bin unrunnable.
       - run: node dist/cli.js --help
       - run: bun dist/cli.js --help
+      # dist/index.js must be plain JS (no raw JSX) parseable by any bundler
+      - run: bunx esbuild dist/index.js --bundle --outfile=/dev/null --external:solid-js --external:solid-js/web --format=esm
       - run: bun run test
       - run: bunx tsc --noEmit
