@@ -13,3 +13,4 @@ logs
 *.tsbuildinfo
 .idea
 .DS_Store
+tests/.tmp-fixtures

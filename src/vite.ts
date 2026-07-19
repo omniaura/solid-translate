@@ -9,7 +9,10 @@ import {
 import { resolve, join, relative, basename } from "node:path";
 import { hashContent } from "./hash.js";
 import { translateBatch } from "./translate.js";
-import { extractStringsFromSource } from "./extract.js";
+import {
+  extractStringsFromSource,
+  type ExtractWarning,
+} from "./extract.js";
 import { syncLocaleFiles, formatSyncFailures } from "./lock.js";
 import type { SolidTranslatePluginConfig } from "./types.js";
 
@@ -281,6 +284,7 @@ async function autoExtractStrings(
 ): Promise<{ strings: Record<string, string>; contexts: Record<string, string> }> {
   const strings: Record<string, string> = {};
   const contexts: Record<string, string> = {};
+  const warnings: ExtractWarning[] = [];
 
   // Dynamically import glob for file matching
   const { glob } = await import("glob");
@@ -293,6 +297,7 @@ async function autoExtractStrings(
         const extracted = extractStringsFromSource(
           code,
           relative(root, file),
+          warnings,
         );
         for (const entry of extracted) {
           strings[entry.key] = entry.source;
@@ -304,6 +309,10 @@ async function autoExtractStrings(
         // Skip unreadable files
       }
     }
+  }
+
+  for (const w of warnings) {
+    console.warn(`[solid-translate] ${w.file}:${w.line} — ${w.message}`);
   }
 
   return { strings, contexts };

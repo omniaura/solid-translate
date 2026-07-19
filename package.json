@@ -31,7 +31,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "bun test",
+    "test": "bun test --conditions=browser",
     "prepublishOnly": "bun run build"
   },
   "keywords": [
@@ -80,6 +80,7 @@
     }
   },
   "dependencies": {
+    "@babel/parser": "^7.26.0",
     "glob": "^11.0.0",
     "zod": "^3.23.0"
   },
@@ -87,10 +88,12 @@
     "@ai-sdk/anthropic": "^1.2.12",
     "@ai-sdk/google": "^1.2.22",
     "@ai-sdk/openai": "^1.3.24",
+    "@babel/core": "^7.26.0",
     "@happy-dom/global-registrator": "^16.0.0",
+    "@semantic-release/git": "^10.0.1",
     "@types/bun": "latest",
     "ai": "^4.0.0",
-    "@semantic-release/git": "^10.0.1",
+    "babel-preset-solid": "^1.9.12",
     "semantic-release": "25",
     "solid-js": "^1.8.0",
     "tsup": "^8.0.0",

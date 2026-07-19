@@ -16,5 +16,5 @@ jobs:
       # bundling regressions that make the published bin unrunnable.
       - run: node dist/cli.js --help
       - run: bun dist/cli.js --help
-      - run: bun test
+      - run: bun run test
       - run: bunx tsc --noEmit
