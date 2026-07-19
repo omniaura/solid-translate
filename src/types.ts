@@ -33,6 +33,23 @@ export type TranslationDictionary = Record<string, string>;
 /** All translations keyed by locale code */
 export type Translations = Record<string, TranslationDictionary>;
 
+/**
+ * Lazy translation manifest, as exported by `virtual:solid-translate/lazy`.
+ * Each loader dynamically imports one locale's dictionary so it becomes its
+ * own chunk instead of being inlined into the main bundle.
+ */
+export interface LazyTranslations {
+  /** Source locale code */
+  sourceLocale: string;
+  /** All available locale codes (source + targets) */
+  locales: string[];
+  /** Per-locale dictionary loaders (dynamic imports) */
+  loaders: Record<string, () => Promise<TranslationDictionary>>;
+}
+
+/** Either an eager translations record or a lazy manifest */
+export type TranslationsInput = Translations | LazyTranslations;
+
 /** Lock file entry tracking a single translation key */
 export interface LockFileEntry {
   hash: string;

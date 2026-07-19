@@ -11,14 +11,24 @@ import {
   type TranslationContextValue,
 } from "./context.js";
 import { detectLocale } from "./locale-detect.js";
-import type { TranslationDictionary, Translations } from "./types.js";
+import type {
+  LazyTranslations,
+  TranslationDictionary,
+  Translations,
+  TranslationsInput,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports
 // ---------------------------------------------------------------------------
 
 export type { TranslationContextValue } from "./context.js";
-export type { TranslationDictionary, Translations } from "./types.js";
+export type {
+  LazyTranslations,
+  TranslationDictionary,
+  Translations,
+  TranslationsInput,
+} from "./types.js";
 export type { SolidTranslatePluginConfig } from "./types.js";
 export { Var, Num, Currency, DateTime, Plural, LocaleSelector } from "./components.js";
 export type {
@@ -44,19 +54,118 @@ export interface TranslationProviderProps {
   locale?: string;
   /** Source locale code (default: "en") */
   sourceLocale?: string;
-  /** Translation dictionaries keyed by locale */
-  translations: Translations;
+  /**
+   * Translation dictionaries keyed by locale (from `virtual:solid-translate`),
+   * or a lazy manifest (from `virtual:solid-translate/lazy`) whose per-locale
+   * dictionaries are loaded on demand via dynamic import.
+   */
+  translations: TranslationsInput;
+  /**
+   * Persist the active locale to `localStorage` (default: false).
+   * When enabled, the initial locale is read from storage (if still valid)
+   * before falling back to browser detection, and `setLocale` writes through.
+   * Pass `{ key: "..." }` to customize the storage key.
+   */
+  persistLocale?: boolean | { key?: string };
   children: JSX.Element;
 }
 
-export function TranslationProvider(props: TranslationProviderProps) {
-  const sourceLocale = props.sourceLocale || "en";
-  const availableLocales = createMemo(() => Object.keys(props.translations));
+const DEFAULT_PERSIST_KEY = "solid-translate:locale";
 
-  // Auto-detect locale from browser if not explicitly provided
+function isLazyTranslations(
+  input: TranslationsInput,
+): input is LazyTranslations {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    Array.isArray((input as LazyTranslations).locales) &&
+    typeof (input as LazyTranslations).loaders === "object" &&
+    (input as LazyTranslations).loaders !== null
+  );
+}
+
+function readPersistedLocale(key: string): string | undefined {
+  try {
+    if (typeof localStorage === "undefined") return undefined;
+    return localStorage.getItem(key) ?? undefined;
+  } catch {
+    // SSR / storage disabled
+    return undefined;
+  }
+}
+
+function writePersistedLocale(key: string, locale: string): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(key, locale);
+  } catch {
+    // SSR / storage disabled / quota exceeded — ignore
+  }
+}
+
+export function TranslationProvider(props: TranslationProviderProps) {
+  const lazy = isLazyTranslations(props.translations)
+    ? props.translations
+    : undefined;
+  const sourceLocale = props.sourceLocale || lazy?.sourceLocale || "en";
+  const availableLocales = createMemo(() =>
+    lazy ? lazy.locales : Object.keys(props.translations),
+  );
+
+  const persistKey = props.persistLocale
+    ? (typeof props.persistLocale === "object"
+        ? props.persistLocale.key
+        : undefined) || DEFAULT_PERSIST_KEY
+    : undefined;
+
+  // Initial locale: explicit prop > persisted value (if valid) > detection
+  const persisted = persistKey ? readPersistedLocale(persistKey) : undefined;
+  const persistedValid =
+    persisted !== undefined &&
+    (persisted === sourceLocale || availableLocales().includes(persisted));
   const initialLocale =
-    props.locale || detectLocale(availableLocales()) || sourceLocale;
-  const [locale, setLocale] = createSignal(initialLocale);
+    props.locale ||
+    (persistedValid ? persisted : undefined) ||
+    detectLocale(availableLocales()) ||
+    sourceLocale;
+  const [locale, setLocaleSignal] = createSignal(initialLocale);
+
+  // Lazily loaded dictionaries, keyed by locale (lazy manifest mode only).
+  // Loading NEVER throws or suspends — while a dictionary is in flight,
+  // t() falls back to the source text.
+  const [loadedDicts, setLoadedDicts] = createSignal<Translations>({});
+  const pendingLoads = new Set<string>();
+
+  const loadLocale = (target: string): void => {
+    if (!lazy) return;
+    const loader = lazy.loaders[target];
+    if (!loader) return;
+    if (target in loadedDicts() || pendingLoads.has(target)) return;
+    pendingLoads.add(target);
+    loader()
+      .then((dict) => {
+        setLoadedDicts((prev) => ({ ...prev, [target]: dict }));
+      })
+      .catch((err) => {
+        console.warn(
+          `[solid-translate] Failed to load locale "${target}":`,
+          err,
+        );
+      })
+      .finally(() => {
+        pendingLoads.delete(target);
+      });
+  };
+
+  const setLocale = (next: string): void => {
+    loadLocale(next);
+    setLocaleSignal(next);
+    if (persistKey) writePersistedLocale(persistKey, next);
+  };
+
+  // Kick off loading for the initial locale (no-op in eager mode, or when
+  // the locale has no loader — e.g. the source locale without a dict).
+  loadLocale(initialLocale);
 
   const t = (
     key: string,
@@ -66,7 +175,9 @@ export function TranslationProvider(props: TranslationProviderProps) {
     let text = key;
 
     // Look up in translation dictionary (works for both source and target locales)
-    const dict = props.translations[cur];
+    const dict = lazy
+      ? loadedDicts()[cur]
+      : (props.translations as Translations)[cur];
     if (dict && key in dict) {
       text = dict[key]!;
     }
