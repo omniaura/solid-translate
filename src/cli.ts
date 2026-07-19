@@ -13,7 +13,7 @@ import { translateBatch, translateMarkdown } from "./translate.js";
 import { hashContent } from "./hash.js";
 import { extractStringsFromSource } from "./extract.js";
 import { syncLocaleFiles, formatSyncFailures } from "./lock.js";
-import type { CLIConfig } from "./types.js";
+import type { CLIConfig, LockFile } from "./types.js";
 
 const CONFIG_FILENAMES = [
   "solid-translate.config.json",
