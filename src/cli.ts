@@ -1,4 +1,6 @@
-#!/usr/bin/env node
+// NOTE: no shebang here — tsup adds it via `banner` in tsup.config.ts.
+// Having both produces a dist/cli.js with two shebang lines, which is a
+// syntax error under node and bun (the published binary cannot run).
 
 import {
   readFileSync,
@@ -7,10 +9,10 @@ import {
   mkdirSync,
 } from "node:fs";
 import { resolve, join, dirname, relative, basename } from "node:path";
-import { hashContent } from "./hash.js";
 import { translateBatch, translateMarkdown } from "./translate.js";
 import { extractStringsFromSource } from "./extract.js";
-import type { CLIConfig, LockFile } from "./types.js";
+import { syncLocaleFiles, formatSyncFailures } from "./lock.js";
+import type { CLIConfig } from "./types.js";
 
 const CONFIG_FILENAMES = [
   "solid-translate.config.json",
@@ -360,104 +362,40 @@ async function translateLocaleFiles(
   batchSize: number,
   systemPrompt?: string,
 ) {
-  const sourceFilePath = join(localesDir, `${sourceLocale}.json`);
-  if (!existsSync(sourceFilePath)) {
+  const result = await syncLocaleFiles({
+    localesDir,
+    sourceLocale,
+    targetLocales,
+    batchSize,
+    translate: (batch, targetLocale, contexts) =>
+      translateBatch(
+        model,
+        batch,
+        targetLocale,
+        sourceLocale,
+        systemPrompt,
+        contexts,
+      ),
+    log: (message) => console.log(message),
+  });
+
+  if (result.status === "no-source") {
     console.log(
       "No source locale file found. Run `solid-translate extract` first.",
     );
     return;
   }
 
-  const sourceDict: Record<string, string> = JSON.parse(
-    readFileSync(sourceFilePath, "utf-8"),
-  );
-
-  // Read lock file
-  const lockFilePath = join(localesDir, ".solid-translate.lock");
-  let lock: LockFile = { version: 1, sourceLocale, keys: {} };
-  if (existsSync(lockFilePath)) {
-    try {
-      lock = JSON.parse(readFileSync(lockFilePath, "utf-8"));
-    } catch {
-      // start fresh
+  if (result.failures.length > 0) {
+    console.error("\nTranslation failed for some batches:");
+    for (const line of formatSyncFailures(result.failures)) {
+      console.error(`  ${line}`);
     }
-  }
-
-  // Find changed keys
-  const changedKeys: Record<string, string> = {};
-  for (const [key, value] of Object.entries(sourceDict)) {
-    const hash = hashContent(value);
-    const existing = lock.keys[key];
-    if (!existing || existing.hash !== hash) {
-      changedKeys[key] = value;
-      lock.keys[key] = { hash, source: value };
-    }
-  }
-
-  // Remove deleted keys
-  for (const key of Object.keys(lock.keys)) {
-    if (!(key in sourceDict)) {
-      delete lock.keys[key];
-    }
-  }
-
-  if (Object.keys(changedKeys).length === 0) {
-    console.log("No changes detected in locale files.");
-    return;
-  }
-
-  const count = Object.keys(changedKeys).length;
-  console.log(
-    `Translating ${count} key${count > 1 ? "s" : ""} to ${targetLocales.length} locale${targetLocales.length > 1 ? "s" : ""}...`,
-  );
-
-  for (const targetLocale of targetLocales) {
-    const targetFilePath = join(localesDir, `${targetLocale}.json`);
-
-    let existing: Record<string, string> = {};
-    if (existsSync(targetFilePath)) {
-      try {
-        existing = JSON.parse(readFileSync(targetFilePath, "utf-8"));
-      } catch {
-        // regenerate
-      }
-    }
-
-    const entries = Object.entries(changedKeys);
-    for (let i = 0; i < entries.length; i += batchSize) {
-      const batch = Object.fromEntries(entries.slice(i, i + batchSize));
-      try {
-        const translated = await translateBatch(
-          model,
-          batch,
-          targetLocale,
-          sourceLocale,
-          systemPrompt,
-        );
-        Object.assign(existing, translated);
-      } catch (err) {
-        console.error(
-          `Failed to translate batch for ${targetLocale}:`,
-          err,
-        );
-      }
-    }
-
-    // Remove deleted keys
-    for (const key of Object.keys(existing)) {
-      if (!(key in sourceDict)) {
-        delete existing[key];
-      }
-    }
-
-    const sorted = Object.fromEntries(
-      Object.entries(existing).sort(([a], [b]) => a.localeCompare(b)),
+    console.error(
+      "Failed keys were not recorded in the lock file — fix the error and rerun `solid-translate translate` to retry them.",
     );
-    writeFileSync(targetFilePath, JSON.stringify(sorted, null, 2) + "\n");
-    console.log(`  ${targetLocale}: ${Object.keys(sorted).length} keys`);
+    process.exit(1);
   }
-
-  writeFileSync(lockFilePath, JSON.stringify(lock, null, 2) + "\n");
 }
 
 main().catch((err) => {

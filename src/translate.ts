@@ -1,6 +1,15 @@
-import { generateObject } from "ai";
 import { z } from "zod";
 import type { LanguageModelV1 } from "ai";
+
+/**
+ * Lazily import the `ai` package so that merely loading this module (e.g.
+ * via the Vite plugin on extract-only or fresh-lock builds) does not require
+ * `ai` to be installed. It is only needed when translation actually runs.
+ */
+async function loadGenerateObject() {
+  const { generateObject } = await import("ai");
+  return generateObject;
+}
 
 /**
  * Translate a batch of key-value pairs from one locale to another using AI.
@@ -44,6 +53,7 @@ export async function translateBatch(
     }
   }
 
+  const generateObject = await loadGenerateObject();
   const { object } = await generateObject({
     model,
     schema: z.object({
@@ -84,6 +94,7 @@ export async function translateMarkdown(
     `- Return natural, idiomatic translations`,
   ].join("\n");
 
+  const generateObject = await loadGenerateObject();
   const { object } = await generateObject({
     model,
     schema: z.object({
