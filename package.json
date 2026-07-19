@@ -1,6 +1,6 @@
 {
   "name": "solid-translate",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "AI-powered build-time translations for SolidJS. Full i18n with <T>, <Var>, <Num>, <Currency>, <Plural>, <DateTime>, locale detection, and a CLI — all BYOK.",
   "type": "module",
   "main": "./dist/index.js",
