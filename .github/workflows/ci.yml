@@ -12,5 +12,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run build
+      # Smoke-test the CLI binary under both runtimes — catches shebang /
+      # bundling regressions that make the published bin unrunnable.
+      - run: node dist/cli.js --help
+      - run: bun dist/cli.js --help
       - run: bun test
       - run: bunx tsc --noEmit

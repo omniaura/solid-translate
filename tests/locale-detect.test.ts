@@ -62,4 +62,24 @@ describe("detectLocale", () => {
     mockNavigator(["EN-US"]);
     expect(detectLocale(["en-us", "fr"])).toBe("en-us");
   });
+
+  test("matches mixed-case available locales case-insensitively", () => {
+    mockNavigator(["pt-br"]);
+    expect(detectLocale(["en", "pt-BR"])).toBe("pt-BR");
+  });
+
+  test("returns canonical casing from availableLocales, not the browser's", () => {
+    mockNavigator(["PT-BR"]);
+    expect(detectLocale(["en", "pt-BR"])).toBe("pt-BR");
+  });
+
+  test("language-only match is case-insensitive with canonical casing", () => {
+    mockNavigator(["FR-CA"]);
+    expect(detectLocale(["en", "FR"])).toBe("FR");
+  });
+
+  test("normalizes underscores against mixed-case available locales", () => {
+    mockNavigator(["pt_BR"]);
+    expect(detectLocale(["en", "pt-BR"])).toBe("pt-BR");
+  });
 });
