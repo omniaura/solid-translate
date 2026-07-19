@@ -1,5 +1,5 @@
 import { createContext } from "solid-js";
-import type { Translations } from "./types.js";
+import type { TranslationsInput } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Context value type
@@ -16,8 +16,8 @@ export interface TranslationContextValue {
   sourceLocale: string;
   /** All available locale codes (reactive) */
   availableLocales: () => string[];
-  /** Raw translations object */
-  translations: Translations;
+  /** Raw translations object (eager record or lazy manifest) */
+  translations: TranslationsInput;
 }
 
 // ---------------------------------------------------------------------------

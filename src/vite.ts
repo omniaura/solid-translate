@@ -6,7 +6,8 @@ import {
   mkdirSync,
   readdirSync,
 } from "node:fs";
-import { resolve, join, relative } from "node:path";
+import { resolve, join, relative, basename } from "node:path";
+import { hashContent } from "./hash.js";
 import { translateBatch } from "./translate.js";
 import { extractStringsFromSource } from "./extract.js";
 import { syncLocaleFiles, formatSyncFailures } from "./lock.js";
@@ -16,6 +17,16 @@ export type { SolidTranslatePluginConfig };
 
 const VIRTUAL_MODULE_ID = "virtual:solid-translate";
 const RESOLVED_VIRTUAL_MODULE_ID = "\0" + VIRTUAL_MODULE_ID;
+
+const VIRTUAL_LAZY_MODULE_ID = "virtual:solid-translate/lazy";
+const RESOLVED_VIRTUAL_LAZY_MODULE_ID = "\0" + VIRTUAL_LAZY_MODULE_ID;
+
+const VIRTUAL_LOCALE_MODULE_PREFIX = "virtual:solid-translate/locale/";
+const RESOLVED_VIRTUAL_LOCALE_MODULE_PREFIX =
+  "\0" + VIRTUAL_LOCALE_MODULE_PREFIX;
+
+/** Locale codes must be simple path-safe tokens (e.g. "en", "pt-BR", "zh_Hant") */
+const LOCALE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Vite plugin for solid-translate.
@@ -154,6 +165,15 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
       if (id === VIRTUAL_MODULE_ID) {
         return RESOLVED_VIRTUAL_MODULE_ID;
       }
+      if (id === VIRTUAL_LAZY_MODULE_ID) {
+        return RESOLVED_VIRTUAL_LAZY_MODULE_ID;
+      }
+      if (id.startsWith(VIRTUAL_LOCALE_MODULE_PREFIX)) {
+        const locale = id.slice(VIRTUAL_LOCALE_MODULE_PREFIX.length);
+        if (LOCALE_ID_PATTERN.test(locale)) {
+          return RESOLVED_VIRTUAL_LOCALE_MODULE_PREFIX + locale;
+        }
+      }
     },
 
     load(id: string) {
@@ -179,6 +199,47 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
 
         return `export default ${JSON.stringify(translations)};`;
       }
+
+      if (id === RESOLVED_VIRTUAL_LAZY_MODULE_ID) {
+        // Lazy manifest: per-locale dictionaries stay out of the main bundle
+        // and are code-split into their own chunks via dynamic import.
+        const locales = [sourceLocale, ...targetLocales].filter(
+          (locale, i, all) => all.indexOf(locale) === i,
+        );
+        const loaderEntries = locales
+          .map(
+            (locale) =>
+              `  ${JSON.stringify(locale)}: () => import(${JSON.stringify(
+                VIRTUAL_LOCALE_MODULE_PREFIX + locale,
+              )}).then((m) => m.default),`,
+          )
+          .join("\n");
+        return [
+          `export const sourceLocale = ${JSON.stringify(sourceLocale)};`,
+          `export const locales = ${JSON.stringify(locales)};`,
+          `export const loaders = {`,
+          loaderEntries,
+          `};`,
+          `export default { sourceLocale, locales, loaders };`,
+        ].join("\n");
+      }
+
+      if (id.startsWith(RESOLVED_VIRTUAL_LOCALE_MODULE_PREFIX)) {
+        // Single locale dictionary module
+        const locale = id.slice(
+          RESOLVED_VIRTUAL_LOCALE_MODULE_PREFIX.length,
+        );
+        let dict: Record<string, string> = {};
+        const filePath = join(resolvedLocalesDir, `${locale}.json`);
+        if (existsSync(filePath)) {
+          try {
+            dict = JSON.parse(readFileSync(filePath, "utf-8"));
+          } catch {
+            // Malformed file — serve empty dict
+          }
+        }
+        return `export default ${JSON.stringify(dict)};`;
+      }
     },
 
     // HMR: reload translations when locale files change
@@ -187,12 +248,21 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
         file.startsWith(resolvedLocalesDir) &&
         file.endsWith(".json")
       ) {
-        const mod = server.moduleGraph.getModuleById(
+        const invalidated = [];
+        const locale = basename(file, ".json");
+        const ids = [
           RESOLVED_VIRTUAL_MODULE_ID,
-        );
-        if (mod) {
-          server.moduleGraph.invalidateModule(mod);
-          return [mod];
+          RESOLVED_VIRTUAL_LOCALE_MODULE_PREFIX + locale,
+        ];
+        for (const id of ids) {
+          const mod = server.moduleGraph.getModuleById(id);
+          if (mod) {
+            server.moduleGraph.invalidateModule(mod);
+            invalidated.push(mod);
+          }
+        }
+        if (invalidated.length > 0) {
+          return invalidated;
         }
       }
     },

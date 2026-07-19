@@ -17,7 +17,10 @@ Write your app in one language. Wrap text in `<T>`. Get translations generated a
 - **Auto Locale Detection** — detects from `navigator.languages` when `locale` prop is omitted
 - **`msg()`** — mark strings for extraction outside of JSX
 - **CLI Tool** — translate JSON, Markdown, and MDX files from the command line
+- **`check` Command** — CI freshness gate, no AI calls (exit 1 when translations are stale)
 - **Vite Plugin** — build-time translation with smart change detection
+- **Lazy Locale Chunks** — `virtual:solid-translate/lazy` code-splits each locale, loads on demand without suspending
+- **Locale Persistence** — opt-in `persistLocale` remembers the user's choice in `localStorage`
 - **GitHub Action** — `omniaura/solid-translate@v1` for CI/CD translation automation
 - **BYOK** — use any [Vercel AI SDK](https://ai-sdk.dev/) provider (OpenRouter, OpenAI, Anthropic, Google, etc.)
 
@@ -251,13 +254,65 @@ Root provider. Wraps your app.
 
 ```tsx
 <TranslationProvider
-  translations={translations}    // Translation dictionaries
+  translations={translations}    // Translation dictionaries or lazy manifest
   sourceLocale="en"              // Source locale (default: "en")
+  persistLocale                  // Optional: persist locale to localStorage
+  // persistLocale={{ key: "my-app:locale" }}  // ...with a custom storage key
   // locale="es"                 // Optional: explicit locale
   //                             // If omitted, auto-detects from navigator.languages
 >
   {children}
 </TranslationProvider>
+```
+
+`translations` accepts either the eager record from `virtual:solid-translate`
+or the lazy manifest from `virtual:solid-translate/lazy` (see
+[Lazy per-locale loading](#lazy-per-locale-loading)).
+
+With `persistLocale` enabled, the initial locale is read from `localStorage`
+(when it's still a valid locale) before falling back to browser detection,
+and `setLocale` writes the choice back. Storage access is guarded, so SSR
+and storage-disabled environments degrade gracefully. An explicit `locale`
+prop always wins.
+
+### Lazy per-locale loading
+
+By default `virtual:solid-translate` inlines every locale dictionary into
+your main bundle. For large apps (thousands of strings × many locales) use
+`virtual:solid-translate/lazy` instead — each locale becomes its own chunk,
+fetched on demand via dynamic import:
+
+```tsx
+import { TranslationProvider } from "solid-translate";
+import translations from "virtual:solid-translate/lazy";
+
+<TranslationProvider translations={translations} persistLocale>
+  <App />
+</TranslationProvider>;
+```
+
+The lazy manifest has this shape:
+
+```ts
+{
+  sourceLocale: string;
+  locales: string[];        // source + target locales
+  loaders: Record<string, () => Promise<Record<string, string>>>;
+}
+```
+
+Loading is fully non-blocking: it never throws and never triggers
+`<Suspense>`. While a locale's dictionary is in flight (or if its chunk
+fails to load), `t()` and `<T>` render the source-language text; the UI
+swaps to the translated text reactively once the loader resolves. Loaded
+dictionaries are cached for the session, and `availableLocales()` derives
+from `locales` in the manifest.
+
+You can also import a single locale's dictionary directly:
+
+```ts
+const es = await import("virtual:solid-translate/locale/es");
+es.default; // Record<string, string>
 ```
 
 ### `msg()` — Shared Strings
@@ -311,7 +366,18 @@ npx solid-translate extract
 
 # Translate everything
 npx solid-translate translate
+
+# Verify translations are fresh (CI primitive — no AI calls, no writes)
+npx solid-translate check
+npx solid-translate check --json   # machine-readable report
 ```
+
+`check` re-extracts source strings and compares keys, content hashes, and
+`context` hints against `.solid-translate.lock`, then verifies every target
+locale file contains every key. Exit code 0 means everything is fresh; exit
+code 1 means stale, with a report of missing/changed/orphaned keys per
+locale. It needs no API key and never modifies files, so it's safe to run
+on every pull request.
 
 ### CLI Config (`solid-translate.config.json`)
 
@@ -409,10 +475,11 @@ jobs:
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `command` | `both` | `extract`, `translate`, or `both` |
+| `command` | `both` | `extract`, `translate`, `check`, or `both` |
 | `working-directory` | `.` | Working directory |
 | `commit` | `false` | Auto-commit updated translation files |
 | `commit-message` | `chore: update translations` | Commit message |
+| `fail-on-stale` | `true` | With `command: check` — fail the step when translations are stale |
 | `node-version` | `22` | Node.js version |
 | `package-manager` | `npm` | `npm`, `bun`, `pnpm`, or `yarn` |
 
@@ -422,10 +489,86 @@ jobs:
 |--------|-------------|
 | `changed` | `true` if translation files were updated |
 | `files` | Newline-separated list of changed translation files |
+| `stale` | With `command: check` — `true` if translations are out of date |
 
 The action reports and commits changes for JSON, Markdown, MDX, and `.solid-translate.lock` files only. Package manifests and package manager lockfiles are intentionally excluded.
 
 #### Examples
+
+**PR gate — fail CI when translations are stale (no API key needed):**
+
+```yaml
+# .github/workflows/i18n-check.yml
+name: i18n check
+
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: omniaura/solid-translate@v1
+        with:
+          command: check
+          package-manager: bun
+```
+
+`check` runs extraction only — no AI provider, no writes — so it's a fast,
+deterministic gate. Set `fail-on-stale: "false"` to keep the step green and
+branch on the `stale` output instead:
+
+```yaml
+      - uses: omniaura/solid-translate@v1
+        id: i18n
+        with:
+          command: check
+          fail-on-stale: "false"
+
+      - name: Comment on stale translations
+        if: steps.i18n.outputs.stale == 'true'
+        run: echo "Translations are stale — run 'solid-translate translate'"
+```
+
+**Translate on main and open a PR with the updates:**
+
+```yaml
+# .github/workflows/translate.yml
+name: Translate
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  translate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: omniaura/solid-translate@v1
+        id: translate
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Open PR with translation updates
+        if: steps.translate.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/update-translations
+          title: "chore: update translations"
+          commit-message: "chore: update translations"
+          body: |
+            Automated translation update.
+
+            Changed files:
+            ${{ steps.translate.outputs.files }}
+```
 
 **Translate on push and commit back:**
 
@@ -518,14 +661,26 @@ This means you can safely check in all translation files. Rebuilds are free unle
 
 ## TypeScript
 
-For the virtual module import, add to your `env.d.ts` or `vite-env.d.ts`:
+Types for all the virtual modules (`virtual:solid-translate`,
+`virtual:solid-translate/lazy`, and `virtual:solid-translate/locale/*`)
+ship with the package. Reference them once in your `env.d.ts` or
+`vite-env.d.ts`:
 
 ```ts
-declare module "virtual:solid-translate" {
-  const translations: Record<string, Record<string, string>>;
-  export default translations;
+/// <reference types="solid-translate/virtual" />
+```
+
+or add them to `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "types": ["solid-translate/virtual"]
+  }
 }
 ```
+
+No hand-written `declare module` blocks needed.
 
 ## Comparison with General Translation (gt-react)
 

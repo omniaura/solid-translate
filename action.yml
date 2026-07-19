@@ -8,9 +8,13 @@ branding:
 
 inputs:
   command:
-    description: "Command to run: extract, translate, or both (default: both)"
+    description: "Command to run: extract, translate, check, or both (default: both)"
     required: false
     default: "both"
+  fail-on-stale:
+    description: "When command is check: fail the step if translations are stale (default: true)"
+    required: false
+    default: "true"
   working-directory:
     description: "Working directory (default: repo root)"
     required: false
@@ -39,6 +43,9 @@ outputs:
   files:
     description: "Newline-separated list of changed translation files"
     value: ${{ steps.check-changes.outputs.files }}
+  stale:
+    description: "When command is check: whether translations are stale (true/false)"
+    value: ${{ steps.check.outputs.stale }}
 
 runs:
   using: "composite"
@@ -48,16 +55,22 @@ runs:
       env:
         COMMAND: ${{ inputs.command }}
         COMMIT: ${{ inputs.commit }}
+        FAIL_ON_STALE: ${{ inputs.fail-on-stale }}
         PACKAGE_MANAGER: ${{ inputs.package-manager }}
       run: |
         case "$COMMAND" in
-          extract|translate|both) ;;
+          extract|translate|check|both) ;;
           *) echo "Invalid command: $COMMAND" >&2; exit 1 ;;
         esac
 
         case "$COMMIT" in
           true|false) ;;
           *) echo "Invalid commit value: $COMMIT" >&2; exit 1 ;;
+        esac
+
+        case "$FAIL_ON_STALE" in
+          true|false) ;;
+          *) echo "Invalid fail-on-stale value: $FAIL_ON_STALE" >&2; exit 1 ;;
         esac
 
         case "$PACKAGE_MANAGER" in
@@ -106,6 +119,39 @@ runs:
           yarn) yarn dlx solid-translate translate ;;
           npm)  npx --yes solid-translate translate ;;
         esac
+
+    - name: Run check
+      if: inputs.command == 'check'
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        FAIL_ON_STALE: ${{ inputs.fail-on-stale }}
+      run: |
+        set +e
+        case "$PACKAGE_MANAGER" in
+          bun)  bunx solid-translate check ;;
+          pnpm) pnpm dlx solid-translate check ;;
+          yarn) yarn dlx solid-translate check ;;
+          npm)  npx --yes solid-translate check ;;
+        esac
+        status=$?
+        set -e
+
+        if [ "$status" -gt 1 ]; then
+          echo "solid-translate check failed with exit code $status" >&2
+          exit "$status"
+        fi
+
+        if [ "$status" -eq 0 ]; then
+          echo "stale=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "stale=true" >> "$GITHUB_OUTPUT"
+          if [ "$FAIL_ON_STALE" = "true" ]; then
+            exit 1
+          fi
+        fi
 
     - name: Check for changes
       id: check-changes

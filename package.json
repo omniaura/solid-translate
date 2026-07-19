@@ -17,10 +17,14 @@
     "./vite": {
       "types": "./dist/vite.d.ts",
       "import": "./dist/vite.js"
+    },
+    "./virtual": {
+      "types": "./virtual.d.ts"
     }
   },
   "files": [
     "dist",
+    "virtual.d.ts",
     "README.md",
     "LICENSE"
   ],

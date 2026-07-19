@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { resolve, join, dirname, relative, basename } from "node:path";
 import { translateBatch, translateMarkdown } from "./translate.js";
+import { hashContent } from "./hash.js";
 import { extractStringsFromSource } from "./extract.js";
 import { syncLocaleFiles, formatSyncFailures } from "./lock.js";
 import type { CLIConfig } from "./types.js";
@@ -44,6 +45,11 @@ async function main() {
     return;
   }
 
+  if (command === "check") {
+    await runCheck(args.includes("--json"));
+    return;
+  }
+
   console.error(`Unknown command: ${command}`);
   printUsage();
   process.exit(1);
@@ -57,6 +63,8 @@ Usage:
   solid-translate init         Create a config file
   solid-translate extract      Extract strings from source files
   solid-translate translate    Translate source strings + files to target locales
+  solid-translate check        Verify translations are up to date (no AI calls)
+                               Exit 0 = fresh, 1 = stale. Use --json for machine output
 
 Config: solid-translate.config.json (or .js/.ts)
 
@@ -230,7 +238,211 @@ async function runExtract() {
   );
 }
 
+interface CheckLocaleReport {
+  /** Keys present in source but absent from this locale file */
+  missing: string[];
+  /** Keys present in this locale file but absent from source */
+  orphaned: string[];
+  /** Whether the locale file exists at all */
+  fileExists: boolean;
+}
+
+interface CheckReport {
+  fresh: boolean;
+  lock: {
+    /** Source keys with no lock entry (never translated) */
+    missing: string[];
+    /** Source keys whose text or context changed since last translation */
+    changed: string[];
+    /** Lock entries for keys no longer in source */
+    orphaned: string[];
+  };
+  locales: Record<string, CheckLocaleReport>;
+}
+
+/**
+ * CI freshness primitive: verifies the lock file and target locale files
+ * are up to date with the current source strings. Runs extraction only —
+ * no AI provider, no writes, no `ai` package needed.
+ */
+async function runCheck(jsonOutput: boolean) {
+  const config = await loadConfig();
+  const root = process.cwd();
+  const sourceLocale = config.sourceLocale || "en";
+  const targetLocales = config.targetLocales || [];
+  const localesDir = resolve(config.localesDir || "./src/locales");
+  const patterns = config.include || [
+    "src/**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.jsx",
+  ];
+
+  // 1. Extract strings from source files (read-only)
+  const { glob } = await import("glob");
+  const extracted: Record<string, string> = {};
+  const contexts: Record<string, string> = {};
+  for (const pattern of patterns) {
+    const files = await glob(pattern, { cwd: root, absolute: true });
+    for (const file of files) {
+      try {
+        const code = readFileSync(file, "utf-8");
+        const entries = extractStringsFromSource(
+          code,
+          relative(root, file),
+        );
+        for (const entry of entries) {
+          extracted[entry.key] = entry.source;
+          if (entry.context) {
+            contexts[entry.key] = entry.context;
+          }
+        }
+      } catch {
+        // skip unreadable
+      }
+    }
+  }
+
+  // 2. Effective source dict: source locale file merged with newly
+  //    extracted keys (mirrors what `extract` would write, without writing)
+  const sourceFilePath = join(localesDir, `${sourceLocale}.json`);
+  const sourceDict: Record<string, string> = {};
+  if (existsSync(sourceFilePath)) {
+    try {
+      Object.assign(
+        sourceDict,
+        JSON.parse(readFileSync(sourceFilePath, "utf-8")),
+      );
+    } catch {
+      // corrupted source file — treat as empty
+    }
+  }
+  for (const [key, value] of Object.entries(extracted)) {
+    if (!(key in sourceDict)) {
+      sourceDict[key] = value;
+    }
+  }
+
+  // 3. Compare keys + hashes + contexts against the lock file
+  const lockFilePath = join(localesDir, ".solid-translate.lock");
+  let lock: LockFile = { version: 1, sourceLocale, keys: {} };
+  if (existsSync(lockFilePath)) {
+    try {
+      lock = JSON.parse(readFileSync(lockFilePath, "utf-8"));
+    } catch {
+      // corrupted lock — every key reports as missing
+    }
+  }
+
+  const report: CheckReport = {
+    fresh: true,
+    lock: { missing: [], changed: [], orphaned: [] },
+    locales: {},
+  };
+
+  for (const [key, value] of Object.entries(sourceDict)) {
+    const entry = lock.keys[key];
+    if (!entry) {
+      report.lock.missing.push(key);
+    } else if (
+      entry.hash !== hashContent(value) ||
+      (entry.context ?? undefined) !== (contexts[key] ?? undefined)
+    ) {
+      report.lock.changed.push(key);
+    }
+  }
+  for (const key of Object.keys(lock.keys)) {
+    if (!(key in sourceDict)) {
+      report.lock.orphaned.push(key);
+    }
+  }
+
+  // 4. Every target locale file must contain every source key
+  const sourceKeys = Object.keys(sourceDict);
+  for (const targetLocale of targetLocales) {
+    const targetFilePath = join(localesDir, `${targetLocale}.json`);
+    let dict: Record<string, string> = {};
+    let fileExists = existsSync(targetFilePath);
+    if (fileExists) {
+      try {
+        dict = JSON.parse(readFileSync(targetFilePath, "utf-8"));
+      } catch {
+        fileExists = false;
+      }
+    }
+    const localeReport: CheckLocaleReport = {
+      missing: sourceKeys.filter((key) => !(key in dict)),
+      orphaned: Object.keys(dict).filter((key) => !(key in sourceDict)),
+      fileExists,
+    };
+    report.locales[targetLocale] = localeReport;
+  }
+
+  report.fresh =
+    report.lock.missing.length === 0 &&
+    report.lock.changed.length === 0 &&
+    report.lock.orphaned.length === 0 &&
+    Object.values(report.locales).every(
+      (l) => l.missing.length === 0 && l.orphaned.length === 0,
+    );
+
+  if (jsonOutput) {
+    console.log(JSON.stringify(report, null, 2));
+  } else {
+    printCheckReport(report, sourceLocale);
+  }
+
+  process.exit(report.fresh ? 0 : 1);
+}
+
+function printCheckReport(report: CheckReport, sourceLocale: string) {
+  if (report.fresh) {
+    console.log("Translations are up to date.");
+    return;
+  }
+
+  console.log("Translations are stale:\n");
+
+  const { missing, changed, orphaned } = report.lock;
+  if (missing.length || changed.length || orphaned.length) {
+    console.log(".solid-translate.lock:");
+    for (const key of missing) {
+      console.log(`  missing:  ${JSON.stringify(key)} (never translated)`);
+    }
+    for (const key of changed) {
+      console.log(`  changed:  ${JSON.stringify(key)} (text or context changed)`);
+    }
+    for (const key of orphaned) {
+      console.log(`  orphaned: ${JSON.stringify(key)} (no longer in source)`);
+    }
+  }
+
+  for (const [locale, localeReport] of Object.entries(report.locales)) {
+    if (!localeReport.missing.length && !localeReport.orphaned.length) {
+      continue;
+    }
+    if (!localeReport.fileExists) {
+      console.log(`${locale}.json: (file missing)`);
+    } else {
+      console.log(`${locale}.json:`);
+    }
+    for (const key of localeReport.missing) {
+      console.log(`  missing:  ${JSON.stringify(key)}`);
+    }
+    for (const key of localeReport.orphaned) {
+      console.log(`  orphaned: ${JSON.stringify(key)}`);
+    }
+  }
+
+  console.log(
+    `\nRun \`solid-translate translate\` to refresh ${sourceLocale} → targets.`,
+  );
+}
+
 async function runTranslate() {
+  // Deferred so ai-free commands (extract, check) never load the `ai` package
+  const { translateBatch, translateMarkdown } = await import(
+    "./translate.js"
+  );
   const config = await loadConfig();
   const root = process.cwd();
   const sourceLocale = config.sourceLocale || "en";
