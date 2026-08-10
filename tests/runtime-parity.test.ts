@@ -58,9 +58,12 @@ export default function Fixture(props) {
 }
 `;
 
-  const keys = extractStringsFromSource(source, "fixture.tsx").map(
-    (e) => e.key,
-  );
+  // The fixture imports the markers from the in-repo source entry point,
+  // so declare it as an accepted import source (a consumer app would
+  // import from "solid-translate" or an i18n re-export instead).
+  const keys = extractStringsFromSource(source, "fixture.tsx", undefined, {
+    importSources: ["../../src/index.ts"],
+  }).map((e) => e.key);
 
   const compiled = await transformAsync(source, {
     presets: [[presetSolid, { generate: "dom", hydratable: false }]],
@@ -345,9 +348,9 @@ export default function Fixture(props) {
   );
 }
 `;
-    const keys = extractStringsFromSource(source, "fixture.tsx").map(
-      (e) => e.key,
-    );
+    const keys = extractStringsFromSource(source, "fixture.tsx", undefined, {
+      importSources: ["../../src/index.ts"],
+    }).map((e) => e.key);
     expect(keys).toContain("Good morning");
 
     const compiled = await transformAsync(source, {

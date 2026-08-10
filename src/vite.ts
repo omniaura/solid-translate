@@ -51,6 +51,7 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
     translate = true,
     autoExtract = false,
     include = ["src/**/*.tsx", "src/**/*.ts", "src/**/*.jsx"],
+    extractImportSources,
   } = config;
 
   let root: string;
@@ -90,7 +91,11 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
       // Auto-extraction: scan source files for <T> and msg() strings
       let contexts: Record<string, string> = {};
       if (autoExtract) {
-        const extracted = await autoExtractStrings(root, include);
+        const extracted = await autoExtractStrings(
+          root,
+          include,
+          extractImportSources,
+        );
         contexts = extracted.contexts;
 
         // Merge into source locale file
@@ -294,6 +299,7 @@ export default solidTranslate;
 async function autoExtractStrings(
   root: string,
   patterns: string[],
+  importSources?: string[],
 ): Promise<{ strings: Record<string, string>; contexts: Record<string, string> }> {
   const strings: Record<string, string> = {};
   const contexts: Record<string, string> = {};
@@ -311,6 +317,7 @@ async function autoExtractStrings(
           code,
           relative(root, file),
           warnings,
+          { importSources },
         );
         for (const entry of extracted) {
           strings[entry.key] = entry.source;

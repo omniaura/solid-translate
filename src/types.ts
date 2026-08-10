@@ -35,6 +35,13 @@ export interface SolidTranslatePluginConfig {
    * Default: `["src/**\/*.tsx", "src/**\/*.ts", "src/**\/*.jsx"]`
    */
   include?: string[];
+  /**
+   * Module specifiers accepted as sources of the extraction markers
+   * (`msg`, `<T>`, `<Plural>`, ...). `"solid-translate"` is always
+   * accepted. When omitted, any specifier whose final path segment is
+   * `solid-translate` or `i18n` (e.g. `"@/i18n"`) is accepted.
+   */
+  extractImportSources?: string[];
 }
 
 /** A flat dictionary mapping keys to translated strings */
@@ -99,4 +106,11 @@ export interface CLIConfig {
   };
   /** Glob patterns for source files to scan */
   include?: string[];
+  /**
+   * Module specifiers accepted as sources of the extraction markers
+   * (`msg`, `<T>`, `<Plural>`, ...). `"solid-translate"` is always
+   * accepted. When omitted, any specifier whose final path segment is
+   * `solid-translate` or `i18n` (e.g. `"@/i18n"`) is accepted.
+   */
+  extractImportSources?: string[];
 }
