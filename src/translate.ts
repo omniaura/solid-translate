@@ -125,16 +125,20 @@ export async function translateBatch(
     JSON.stringify(entries, null, 2),
   ].join("\n");
 
-  const attempt = async (prompt: string) => {
+  const attempt = async (prompt: string, keyCount: number) => {
     const { text } = await generateText({
       model,
       system: systemPrompt || defaultSystem,
       prompt,
+      // Provider-default output ceilings (often 4k tokens) truncate large
+      // batches mid-JSON ("Unterminated string in JSON"). Scale the ceiling
+      // with batch size so the full object always fits.
+      maxTokens: Math.min(32_000, 2_000 + 400 * keyCount),
     });
     return collectBatchTranslations(extractJsonObject(text), keys);
   };
 
-  let { translations, missing } = await attempt(basePrompt);
+  let { translations, missing } = await attempt(basePrompt, keys.length);
 
   if (missing.length > 0) {
     // One corrective retry for just the missing keys, then hard-fail so the
@@ -149,6 +153,7 @@ export async function translateBatch(
         contextSection,
         JSON.stringify(retryEntries, null, 2),
       ].join("\n"),
+      missing.length,
     );
     translations = { ...translations, ...retry.translations };
     missing = retry.missing;
@@ -194,6 +199,9 @@ export async function translateMarkdown(
       translated: z.string(),
     }),
     system: systemPrompt || defaultSystem,
+    // Scale the output ceiling with document size so long documents are not
+    // truncated by provider-default limits.
+    maxTokens: Math.min(32_000, 2_000 + Math.ceil(content.length / 2)),
     prompt: [
       `Translate this Markdown/MDX content from "${sourceLocale}" to "${targetLocale}".`,
       `Return the complete translated document.`,
