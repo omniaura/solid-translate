@@ -160,7 +160,7 @@ describe("syncLocaleFiles self-heal", () => {
     const calls: string[] = [];
     const trackingTranslate: TranslateFn = async (batch, locale) => {
       calls.push(locale);
-      return fakeTranslate(batch, locale, undefined);
+      return fakeTranslate(batch, locale, {});
     };
 
     const result = await syncLocaleFiles({
