@@ -160,7 +160,20 @@ export async function syncLocaleFiles(
 
   const changedCount = Object.keys(changedKeys).length;
 
-  if (changedCount === 0 && deletedKeys.length === 0) {
+  // Self-heal: keys the lock considers translated but that are absent from a
+  // target locale file (e.g. after an interrupted or previously-buggy run)
+  // still need translation for that locale, regardless of the lock diff.
+  const missingByLocale: Record<string, string[]> = {};
+  for (const targetLocale of targetLocales) {
+    const existing = readTargetFile(join(localesDir, `${targetLocale}.json`));
+    const missing = Object.keys(sourceDict).filter(
+      (key) => !(key in changedKeys) && !(key in existing),
+    );
+    if (missing.length > 0) missingByLocale[targetLocale] = missing;
+  }
+  const missingLocaleCount = Object.keys(missingByLocale).length;
+
+  if (changedCount === 0 && deletedKeys.length === 0 && missingLocaleCount === 0) {
     log("No changes detected in locale files.");
     return {
       status: "no-changes",
@@ -170,7 +183,7 @@ export async function syncLocaleFiles(
     };
   }
 
-  if (changedCount === 0) {
+  if (changedCount === 0 && missingLocaleCount === 0) {
     // Deletions only — prune target files and the lock, no AI calls needed
     for (const targetLocale of targetLocales) {
       const targetFilePath = join(localesDir, `${targetLocale}.json`);
@@ -185,16 +198,25 @@ export async function syncLocaleFiles(
     return { status: "synced", translatedKeys: [], deletedKeys, failures: [] };
   }
 
-  log(
-    `Translating ${changedCount} key${changedCount > 1 ? "s" : ""} to ${targetLocales.length} locale${targetLocales.length > 1 ? "s" : ""}...`,
-  );
-
-  // Context hints for the changed keys, passed to the translator
-  const changedContexts: Record<string, string> = {};
-  for (const key of Object.keys(changedKeys)) {
-    const ctx = pendingEntries[key]?.context;
-    if (ctx) changedContexts[key] = ctx;
+  if (changedCount > 0) {
+    log(
+      `Translating ${changedCount} key${changedCount > 1 ? "s" : ""} to ${targetLocales.length} locale${targetLocales.length > 1 ? "s" : ""}...`,
+    );
   }
+  if (missingLocaleCount > 0) {
+    const healTotal = Object.values(missingByLocale).reduce(
+      (sum, keys) => sum + keys.length,
+      0,
+    );
+    log(
+      `Healing ${healTotal} key${healTotal > 1 ? "s" : ""} missing from ${missingLocaleCount} locale file${missingLocaleCount > 1 ? "s" : ""}...`,
+    );
+  }
+
+  // Context hints, passed to the translator. Changed keys carry their pending
+  // entry's context; healed keys fall back to the committed lock entry.
+  const contextFor = (key: string): string | undefined =>
+    pendingEntries[key]?.context ?? lock.keys[key]?.context;
 
   const failures: SyncFailure[] = [];
   const failedKeys = new Set<string>();
@@ -205,15 +227,26 @@ export async function syncLocaleFiles(
     // Load existing translations to preserve unchanged keys
     const existing = readTargetFile(targetFilePath);
 
-    // Batch translate changed keys
-    const entries = Object.entries(changedKeys);
+    // Changed keys for every locale, plus this locale's healed keys
+    const localeEntries: Record<string, string> = { ...changedKeys };
+    for (const key of missingByLocale[targetLocale] ?? []) {
+      localeEntries[key] = sourceDict[key]!;
+    }
+    const localeContexts: Record<string, string> = {};
+    for (const key of Object.keys(localeEntries)) {
+      const ctx = contextFor(key);
+      if (ctx) localeContexts[key] = ctx;
+    }
+
+    // Batch translate
+    const entries = Object.entries(localeEntries);
     for (let i = 0; i < entries.length; i += batchSize) {
       const batch = Object.fromEntries(entries.slice(i, i + batchSize));
       try {
         const translated = await translate(
           batch,
           targetLocale,
-          changedContexts,
+          localeContexts,
         );
         Object.assign(existing, translated);
       } catch (err) {
