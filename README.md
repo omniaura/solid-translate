@@ -350,8 +350,28 @@ solidTranslate({
   batchSize: 50,                 // Keys per API call (default: 50)
   autoExtract: true,             // Auto-extract <T> and msg() strings (default: false)
   include: ["src/**/*.tsx"],     // Files to scan for extraction
+  extractImportSources: ["@/i18n"], // Extra module specifiers whose msg/<T> imports count as markers (optional)
 })
 ```
+
+### What extraction considers a marker
+
+Extraction only honors `msg()` calls and `<T>`/`<Plural>` elements whose
+identifier actually refers to solid-translate:
+
+- Imported bindings must come from `"solid-translate"` or an accepted
+  re-export wrapper. By default any specifier whose final path segment is
+  `solid-translate` or `i18n` (e.g. `@/i18n`, `../lib/i18n`) is accepted;
+  set `extractImportSources` (plugin config) / `"extractImportSources"`
+  (CLI config) to an explicit list to override the `i18n` heuristic
+  (`"solid-translate"` itself is always accepted).
+- Aliased imports work: `import { msg as m } from "solid-translate"`
+  extracts `m("...")`.
+- Locally bound identifiers are never extracted — a callback parameter
+  named `msg`, a local `const msg = ...`, or a local component named `T`
+  will not pollute the catalog or emit warnings.
+- Identifiers with no binding at all are still treated as markers by name,
+  so snippet-style sources keep working.
 
 ## CLI
 

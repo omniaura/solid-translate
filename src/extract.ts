@@ -17,6 +17,21 @@ export interface ExtractWarning {
   message: string;
 }
 
+/** Options controlling how extraction markers are recognized */
+export interface ExtractOptions {
+  /**
+   * Module specifiers accepted as sources of the extraction markers
+   * (`msg`, `<T>`, `<Plural>`, ...). When a file imports a marker
+   * identifier, it is only treated as an extraction marker if the import
+   * comes from one of these specifiers (exact match). `"solid-translate"`
+   * is always accepted. When omitted, any specifier whose final path
+   * segment is `solid-translate` or `i18n` (optionally with an extension,
+   * e.g. `"@/i18n"`, `"../i18n.ts"`) is accepted — covering host-app
+   * re-export wrappers.
+   */
+  importSources?: string[];
+}
+
 // Minimal structural type for Babel AST nodes — avoids a hard dependency on
 // @babel/types (we only walk, never construct).
 interface Node {
@@ -65,6 +80,17 @@ interface Node {
  * whole `<T>` is skipped with a warning. Wrap such values in `<Var>` to
  * make them extractable.
  *
+ * Markers are only honored when the identifier actually refers to
+ * solid-translate:
+ * - If the file imports the identifier, the import must come from an
+ *   accepted specifier (see {@link ExtractOptions.importSources});
+ *   aliased imports (`import { msg as m }`) are resolved to their
+ *   imported name.
+ * - A local binding (function param, `const msg = ...`, a local component
+ *   named `T`, ...) shadows the marker and is never extracted.
+ * - An identifier with no binding at all is treated as a marker by name
+ *   (backwards compatible with snippet-style sources).
+ *
  * Pass a `warnings` array to collect unextractable shapes (dynamic
  * `msg()` arguments, spread props on `<T>`, non-literal `<Plural>`
  * forms, ...).
@@ -73,6 +99,7 @@ export function extractStringsFromSource(
   code: string,
   filePath: string,
   warnings?: ExtractWarning[],
+  options?: ExtractOptions,
 ): ExtractedString[] {
   const results: ExtractedString[] = [];
   const seen = new Set<string>();
@@ -99,13 +126,40 @@ export function extractStringsFromSource(
     results.push(entry);
   };
 
+  const bindings = collectModuleBindings(ast);
+  const shadowStack: Set<string>[] = [];
+
+  /**
+   * Resolve a local identifier to the marker it refers to, or null when it
+   * is bound to something other than a solid-translate import.
+   */
+  const resolveMarker = (localName: string): string | null => {
+    for (let i = shadowStack.length - 1; i >= 0; i--) {
+      if (shadowStack[i]!.has(localName)) return null;
+    }
+    const imported = bindings.imports.get(localName);
+    if (imported) {
+      if (!isAcceptedImportSource(imported.source, options?.importSources)) {
+        return null;
+      }
+      return MARKER_NAMES.has(imported.imported) ? imported.imported : null;
+    }
+    if (bindings.moduleLocals.has(localName)) return null;
+    // Unbound identifier: assume ambient marker (backwards compatible)
+    return MARKER_NAMES.has(localName) ? localName : null;
+  };
+
   const visit = (node: Node) => {
+    const scopeBindings = collectScopeBindings(node);
+    if (scopeBindings) shadowStack.push(scopeBindings);
+
     if (node.type === "JSXElement") {
       const name = jsxName(node);
-      if (name === "T") {
+      const marker = name ? resolveMarker(name) : null;
+      if (marker === "T") {
         const entry = processT(node, filePath, warn);
         if (entry) push(entry);
-      } else if (name === "Plural") {
+      } else if (marker === "Plural") {
         for (const entry of processPlural(node, filePath, warn)) {
           push(entry);
         }
@@ -113,16 +167,189 @@ export function extractStringsFromSource(
     } else if (
       node.type === "CallExpression" &&
       node.callee?.type === "Identifier" &&
-      node.callee.name === "msg"
+      resolveMarker(node.callee.name) === "msg"
     ) {
       const entry = processMsg(node, filePath, warn);
       if (entry) push(entry);
     }
     walkChildren(node, visit);
+
+    if (scopeBindings) shadowStack.pop();
   };
 
   visit(ast);
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Marker binding resolution
+// ---------------------------------------------------------------------------
+
+/** Identifiers solid-translate exports that act as extraction markers */
+const MARKER_NAMES = new Set([
+  "msg",
+  "T",
+  "Var",
+  "Num",
+  "Currency",
+  "DateTime",
+  "Plural",
+]);
+
+/**
+ * Default accepted import specifiers: `solid-translate` itself, or any
+ * path whose final segment is `solid-translate` or `i18n` (host-app
+ * re-export wrappers like `@/i18n`, `~/lib/i18n`, `./i18n.ts`).
+ */
+const DEFAULT_IMPORT_SOURCE_RE =
+  /(^|\/)(solid-translate|i18n)(\.[cm]?[jt]sx?)?$/;
+
+function isAcceptedImportSource(
+  source: string,
+  importSources?: string[],
+): boolean {
+  if (source === "solid-translate") return true;
+  if (importSources) return importSources.includes(source);
+  return DEFAULT_IMPORT_SOURCE_RE.test(source);
+}
+
+interface ModuleBindings {
+  /** local name → imported name + module specifier */
+  imports: Map<string, { imported: string; source: string }>;
+  /** Marker-named identifiers declared at module level (non-import) */
+  moduleLocals: Set<string>;
+}
+
+/** Collect import bindings and module-level declarations of marker names */
+function collectModuleBindings(ast: Node): ModuleBindings {
+  const imports = new Map<string, { imported: string; source: string }>();
+  const moduleLocals = new Set<string>();
+
+  const body: Node[] = ast.program?.body ?? [];
+  for (const stmt of body) {
+    if (stmt.type === "ImportDeclaration") {
+      const source = String(stmt.source?.value ?? "");
+      for (const spec of (stmt.specifiers ?? []) as Node[]) {
+        const local = spec.local?.name;
+        if (typeof local !== "string") continue;
+        if (spec.type === "ImportSpecifier") {
+          const imported =
+            spec.imported?.type === "Identifier"
+              ? spec.imported.name
+              : String(spec.imported?.value ?? "");
+          imports.set(local, { imported, source });
+        } else {
+          // Default / namespace imports never bind a marker directly
+          imports.set(local, { imported: "*", source });
+        }
+      }
+    } else {
+      collectDeclaredNames(stmt, moduleLocals);
+    }
+  }
+
+  return { imports, moduleLocals };
+}
+
+/** Collect marker-named identifiers a statement declares (top level) */
+function collectDeclaredNames(stmt: Node, into: Set<string>) {
+  if (
+    stmt.type === "ExportNamedDeclaration" ||
+    stmt.type === "ExportDefaultDeclaration"
+  ) {
+    if (stmt.declaration) collectDeclaredNames(stmt.declaration as Node, into);
+    return;
+  }
+  if (stmt.type === "VariableDeclaration") {
+    for (const decl of (stmt.declarations ?? []) as Node[]) {
+      if (decl.id) collectPatternNames(decl.id as Node, into);
+    }
+    return;
+  }
+  if (
+    (stmt.type === "FunctionDeclaration" ||
+      stmt.type === "ClassDeclaration" ||
+      stmt.type === "TSEnumDeclaration") &&
+    stmt.id?.type === "Identifier"
+  ) {
+    addMarkerName(stmt.id.name, into);
+  }
+}
+
+/** Collect identifiers bound by a destructuring/param pattern */
+function collectPatternNames(pattern: Node, into: Set<string>) {
+  switch (pattern.type) {
+    case "Identifier":
+      addMarkerName(pattern.name, into);
+      break;
+    case "AssignmentPattern":
+      collectPatternNames(pattern.left as Node, into);
+      break;
+    case "RestElement":
+      collectPatternNames(pattern.argument as Node, into);
+      break;
+    case "ObjectPattern":
+      for (const prop of (pattern.properties ?? []) as Node[]) {
+        if (prop.type === "ObjectProperty") {
+          collectPatternNames(prop.value as Node, into);
+        } else if (prop.type === "RestElement") {
+          collectPatternNames(prop.argument as Node, into);
+        }
+      }
+      break;
+    case "ArrayPattern":
+      for (const el of (pattern.elements ?? []) as (Node | null)[]) {
+        if (el) collectPatternNames(el, into);
+      }
+      break;
+  }
+}
+
+function addMarkerName(name: unknown, into: Set<string>) {
+  if (typeof name === "string" && MARKER_NAMES.has(name)) into.add(name);
+}
+
+const FUNCTION_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionExpression",
+  "FunctionDeclaration",
+  "ObjectMethod",
+  "ClassMethod",
+  "ClassPrivateMethod",
+]);
+
+/**
+ * Marker-named identifiers a node binds for its subtree (function params,
+ * block-level declarations, catch params, for-loop bindings). Returns null
+ * when the node introduces no relevant bindings — most nodes — so the
+ * shadow stack stays shallow.
+ */
+function collectScopeBindings(node: Node): Set<string> | null {
+  const bound = new Set<string>();
+
+  if (FUNCTION_TYPES.has(node.type)) {
+    if (node.id?.type === "Identifier") addMarkerName(node.id.name, bound);
+    for (const param of (node.params ?? []) as Node[]) {
+      collectPatternNames(param, bound);
+    }
+  } else if (node.type === "CatchClause" && node.param) {
+    collectPatternNames(node.param as Node, bound);
+  } else if (node.type === "BlockStatement") {
+    for (const stmt of (node.body ?? []) as Node[]) {
+      collectDeclaredNames(stmt, bound);
+    }
+  } else if (
+    node.type === "ForStatement" ||
+    node.type === "ForOfStatement" ||
+    node.type === "ForInStatement"
+  ) {
+    const init = node.init ?? node.left;
+    if (init?.type === "VariableDeclaration") {
+      collectDeclaredNames(init as Node, bound);
+    }
+  }
+
+  return bound.size > 0 ? bound : null;
 }
 
 // ---------------------------------------------------------------------------

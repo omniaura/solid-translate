@@ -203,6 +203,7 @@ async function runExtract() {
           code,
           relative(root, file),
           warnings,
+          { importSources: config.extractImportSources },
         );
         for (const entry of extracted) {
           strings[entry.key] = entry.source;
@@ -298,6 +299,8 @@ async function runCheck(jsonOutput: boolean) {
         const entries = extractStringsFromSource(
           code,
           relative(root, file),
+          undefined,
+          { importSources: config.extractImportSources },
         );
         for (const entry of entries) {
           extracted[entry.key] = entry.source;
