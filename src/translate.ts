@@ -11,6 +11,64 @@ async function loadGenerateObject() {
   return generateObject;
 }
 
+async function loadGenerateText() {
+  const { generateText } = await import("ai");
+  return generateText;
+}
+
+/**
+ * Pull a JSON object out of a model text response. Tolerates markdown code
+ * fences and prose around the object; takes the outermost `{...}` span.
+ * Exported for tests.
+ */
+export function extractJsonObject(text: string): Record<string, unknown> {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) {
+    throw new Error("model response contained no JSON object");
+  }
+  const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("model response was not a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Normalize a parsed model response into a translations dictionary limited to
+ * the requested keys, and report which requested keys are missing (absent,
+ * non-string, or empty). Unwraps a `{ "translations": { ... } }` envelope if
+ * the model added one. Exported for tests.
+ */
+export function collectBatchTranslations(
+  parsed: Record<string, unknown>,
+  requestedKeys: string[],
+): { translations: Record<string, string>; missing: string[] } {
+  let dict = parsed;
+  const inner = parsed["translations"];
+  if (
+    typeof inner === "object" &&
+    inner !== null &&
+    !Array.isArray(inner) &&
+    // Only unwrap when the envelope key is not itself a requested key
+    !requestedKeys.includes("translations")
+  ) {
+    dict = inner as Record<string, unknown>;
+  }
+
+  const translations: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const key of requestedKeys) {
+    const value = dict[key];
+    if (typeof value === "string" && value.length > 0) {
+      translations[key] = value;
+    } else {
+      missing.push(key);
+    }
+  }
+  return { translations, missing };
+}
+
 /**
  * Translate a batch of key-value pairs from one locale to another using AI.
  * Supports optional per-key context hints for disambiguation.
@@ -53,22 +111,57 @@ export async function translateBatch(
     }
   }
 
-  const generateObject = await loadGenerateObject();
-  const { object } = await generateObject({
-    model,
-    schema: z.object({
-      translations: z.record(z.string(), z.string()),
-    }),
-    system: systemPrompt || defaultSystem,
-    prompt: [
-      `Translate each value in this JSON object from "${sourceLocale}" to "${targetLocale}".`,
-      `Return a JSON object with the exact same keys and the translated values.`,
-      contextSection,
-      JSON.stringify(entries, null, 2),
-    ].join("\n"),
-  });
+  // generateText + manual JSON parsing instead of generateObject: a
+  // Record<string, string> compiles to a JSON schema made only of
+  // `additionalProperties`, which several providers' structured-output modes
+  // handle badly — Gemini (via OpenRouter) silently returns `{}` and OpenAI's
+  // strict mode rejects the schema outright. Free-form JSON with strict
+  // post-validation works across every provider.
+  const generateText = await loadGenerateText();
+  const basePrompt = [
+    `Translate each value in this JSON object from "${sourceLocale}" to "${targetLocale}".`,
+    `Respond with ONLY a JSON object — no prose, no code fences — containing the exact same keys and the translated values.`,
+    contextSection,
+    JSON.stringify(entries, null, 2),
+  ].join("\n");
 
-  return object.translations;
+  const attempt = async (prompt: string) => {
+    const { text } = await generateText({
+      model,
+      system: systemPrompt || defaultSystem,
+      prompt,
+    });
+    return collectBatchTranslations(extractJsonObject(text), keys);
+  };
+
+  let { translations, missing } = await attempt(basePrompt);
+
+  if (missing.length > 0) {
+    // One corrective retry for just the missing keys, then hard-fail so the
+    // caller records the batch as failed instead of committing a poisoned
+    // lock over silently-untranslated keys.
+    const retryEntries: Record<string, string> = {};
+    for (const key of missing) retryEntries[key] = entries[key]!;
+    const retry = await attempt(
+      [
+        `Translate each value in this JSON object from "${sourceLocale}" to "${targetLocale}".`,
+        `Respond with ONLY a JSON object — no prose, no code fences — containing the exact same keys and the translated values.`,
+        contextSection,
+        JSON.stringify(retryEntries, null, 2),
+      ].join("\n"),
+    );
+    translations = { ...translations, ...retry.translations };
+    missing = retry.missing;
+  }
+
+  if (missing.length > 0) {
+    const sample = missing.slice(0, 3).join('", "');
+    throw new Error(
+      `model returned no translation for ${missing.length} of ${keys.length} keys (e.g. "${sample}")`,
+    );
+  }
+
+  return translations;
 }
 
 /**
