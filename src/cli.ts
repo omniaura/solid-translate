@@ -461,6 +461,7 @@ async function runTranslate() {
   const targetLocales = config.targetLocales;
   const localesDir = resolve(config.localesDir || "./src/locales");
   const batchSize = config.batchSize || 50;
+  const maxAttempts = config.maxAttempts || 3;
 
   if (!targetLocales || targetLocales.length === 0) {
     console.error("No targetLocales configured.");
@@ -477,6 +478,7 @@ async function runTranslate() {
     targetLocales,
     batchSize,
     config.systemPrompt,
+    maxAttempts,
   );
 
   // 2. Translate additional file types (JSON, Markdown, MDX)
@@ -532,6 +534,8 @@ async function runTranslate() {
                   targetLocale,
                   sourceLocale,
                   config.systemPrompt,
+                  undefined,
+                  { maxAttempts, log: (message) => console.log(message) },
                 );
                 mkdirSync(dirname(actualTarget), { recursive: true });
                 writeFileSync(
@@ -585,6 +589,7 @@ async function translateLocaleFiles(
   targetLocales: string[],
   batchSize: number,
   systemPrompt?: string,
+  maxAttempts?: number,
 ) {
   const result = await syncLocaleFiles({
     localesDir,
@@ -599,6 +604,7 @@ async function translateLocaleFiles(
         sourceLocale,
         systemPrompt,
         contexts,
+        { maxAttempts, log: (message) => console.log(`  ${message}`) },
       ),
     log: (message) => console.log(message),
   });

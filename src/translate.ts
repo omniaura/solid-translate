@@ -69,9 +69,61 @@ export function collectBatchTranslations(
   return { translations, missing };
 }
 
+/** Tuning knobs for translateBatch's recovery loop. */
+export interface TranslateBatchOptions {
+  /**
+   * Attempts per (sub-)batch before giving up (default 3). Each attempt
+   * targets only the keys still missing; a batch that stays incomplete is
+   * split in half and each half gets its own attempts, so one truncated or
+   * malformed response never fails the whole batch.
+   */
+  maxAttempts?: number;
+  /** Base delay for exponential backoff between attempts (default 500ms). */
+  baseDelayMs?: number;
+  /** Optional progress logger for retries and splits. */
+  log?: (message: string) => void;
+  /** Injectable sleep for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_BASE_DELAY_MS = 500;
+
+/**
+ * Output token ceiling for one model call. Provider defaults (often 4k)
+ * truncate large batches mid-JSON; scale with the key count AND the amount
+ * of source text so a batch of long paragraphs (or a target script that
+ * tokenizes densely) still fits. Exported for tests.
+ */
+export function batchMaxTokens(entries: Record<string, string>): number {
+  const keyCount = Object.keys(entries).length;
+  let sourceChars = 0;
+  for (const [key, value] of Object.entries(entries)) {
+    sourceChars += key.length + value.length;
+  }
+  return Math.min(32_000, 2_000 + 400 * keyCount + Math.ceil(sourceChars * 1.5));
+}
+
+/** Exponential backoff with jitter: base, 2×base, 4×base … capped at 30s. */
+export function backoffDelay(attempt: number, baseDelayMs: number): number {
+  const exp = Math.min(30_000, baseDelayMs * 2 ** Math.max(0, attempt - 1));
+  return Math.round(exp * (0.75 + Math.random() * 0.5));
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Translate a batch of key-value pairs from one locale to another using AI.
  * Supports optional per-key context hints for disambiguation.
+ *
+ * Recovery: a call that throws (network, rate limit, unparseable JSON) or
+ * comes back with keys missing is retried with exponential backoff, always
+ * for just the keys still missing. A batch that makes no progress across an
+ * attempt is split in half and each half is translated independently, down
+ * to single keys. Only when a key fails every attempt does the batch throw,
+ * so the caller records exactly those keys as failed.
  */
 export async function translateBatch(
   model: LanguageModelV1,
@@ -80,9 +132,15 @@ export async function translateBatch(
   sourceLocale: string,
   systemPrompt?: string,
   contexts?: Record<string, string>,
+  options: TranslateBatchOptions = {},
 ): Promise<Record<string, string>> {
   const keys = Object.keys(entries);
   if (keys.length === 0) return {};
+
+  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const sleep = options.sleep ?? defaultSleep;
+  const log = options.log ?? (() => {});
 
   const defaultSystem = [
     `You are a professional translator specializing in software localization.`,
@@ -95,21 +153,16 @@ export async function translateBatch(
     `- Return natural, idiomatic translations`,
   ].join("\n");
 
-  // Build context section if any keys have context hints
-  let contextSection = "";
-  if (contexts && Object.keys(contexts).length > 0) {
+  const contextSectionFor = (subset: Record<string, string>): string => {
+    if (!contexts || Object.keys(contexts).length === 0) return "";
     const contextLines = Object.entries(contexts)
-      .filter(([key]) => key in entries)
+      .filter(([key]) => key in subset)
       .map(([key, ctx]) => `  "${key}": ${ctx}`);
-    if (contextLines.length > 0) {
-      contextSection = [
-        ``,
-        `Context hints for disambiguation:`,
-        ...contextLines,
-        ``,
-      ].join("\n");
-    }
-  }
+    if (contextLines.length === 0) return "";
+    return [``, `Context hints for disambiguation:`, ...contextLines, ``].join(
+      "\n",
+    );
+  };
 
   // generateText + manual JSON parsing instead of generateObject: a
   // Record<string, string> compiles to a JSON schema made only of
@@ -118,51 +171,71 @@ export async function translateBatch(
   // strict mode rejects the schema outright. Free-form JSON with strict
   // post-validation works across every provider.
   const generateText = await loadGenerateText();
-  const basePrompt = [
-    `Translate each value in this JSON object from "${sourceLocale}" to "${targetLocale}".`,
-    `Respond with ONLY a JSON object — no prose, no code fences — containing the exact same keys and the translated values.`,
-    contextSection,
-    JSON.stringify(entries, null, 2),
-  ].join("\n");
 
-  const attempt = async (prompt: string, keyCount: number) => {
+  const attempt = async (subset: Record<string, string>) => {
+    const subsetKeys = Object.keys(subset);
     const { text } = await generateText({
       model,
       system: systemPrompt || defaultSystem,
-      prompt,
-      // Provider-default output ceilings (often 4k tokens) truncate large
-      // batches mid-JSON ("Unterminated string in JSON"). Scale the ceiling
-      // with batch size so the full object always fits.
-      maxTokens: Math.min(32_000, 2_000 + 400 * keyCount),
-    });
-    return collectBatchTranslations(extractJsonObject(text), keys);
-  };
-
-  let { translations, missing } = await attempt(basePrompt, keys.length);
-
-  if (missing.length > 0) {
-    // One corrective retry for just the missing keys, then hard-fail so the
-    // caller records the batch as failed instead of committing a poisoned
-    // lock over silently-untranslated keys.
-    const retryEntries: Record<string, string> = {};
-    for (const key of missing) retryEntries[key] = entries[key]!;
-    const retry = await attempt(
-      [
+      prompt: [
         `Translate each value in this JSON object from "${sourceLocale}" to "${targetLocale}".`,
         `Respond with ONLY a JSON object — no prose, no code fences — containing the exact same keys and the translated values.`,
-        contextSection,
-        JSON.stringify(retryEntries, null, 2),
+        contextSectionFor(subset),
+        JSON.stringify(subset, null, 2),
       ].join("\n"),
-      missing.length,
-    );
-    translations = { ...translations, ...retry.translations };
-    missing = retry.missing;
-  }
+      maxTokens: batchMaxTokens(subset),
+    });
+    return collectBatchTranslations(extractJsonObject(text), subsetKeys);
+  };
 
-  if (missing.length > 0) {
-    const sample = missing.slice(0, 3).join('", "');
+  const translations: Record<string, string> = {};
+  const failed: string[] = [];
+  let lastError: unknown;
+
+  const recover = async (pending: string[], depth: number): Promise<void> => {
+    let remaining = pending;
+    for (let n = 1; n <= maxAttempts && remaining.length > 0; n++) {
+      const subset: Record<string, string> = {};
+      for (const key of remaining) subset[key] = entries[key]!;
+      let missing: string[];
+      try {
+        const result = await attempt(subset);
+        Object.assign(translations, result.translations);
+        missing = result.missing;
+      } catch (err) {
+        lastError = err;
+        missing = remaining;
+        log(
+          `translate ${targetLocale}: attempt ${n}/${maxAttempts} for ${remaining.length} key(s) failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      if (missing.length === 0) return;
+      const progressed = missing.length < remaining.length;
+      remaining = missing;
+      // No progress on a multi-key batch: the response was probably truncated
+      // or malformed as a whole. Halve it and let each half recover on its own.
+      if (!progressed && remaining.length > 1) {
+        const mid = Math.ceil(remaining.length / 2);
+        log(
+          `translate ${targetLocale}: splitting ${remaining.length} key(s) into ${mid} + ${remaining.length - mid}`,
+        );
+        await recover(remaining.slice(0, mid), depth + 1);
+        await recover(remaining.slice(mid), depth + 1);
+        return;
+      }
+      if (n < maxAttempts) await sleep(backoffDelay(n, baseDelayMs));
+    }
+    failed.push(...remaining);
+  };
+
+  await recover(keys, 0);
+
+  if (failed.length > 0) {
+    const sample = failed.slice(0, 3).join('", "');
+    const cause =
+      lastError instanceof Error ? ` (last error: ${lastError.message})` : "";
     throw new Error(
-      `model returned no translation for ${missing.length} of ${keys.length} keys (e.g. "${sample}")`,
+      `model returned no translation for ${failed.length} of ${keys.length} keys after ${maxAttempts} attempts (e.g. "${sample}")${cause}`,
     );
   }
 
