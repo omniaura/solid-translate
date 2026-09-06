@@ -125,12 +125,43 @@ async function loadConfig(): Promise<CLIConfig> {
   process.exit(1);
 }
 
+/**
+ * Resolves the OpenAI-compatible provider settings: any host that speaks the
+ * OpenAI chat-completions wire (a self-hosted gateway, Ditto's inference
+ * endpoint, LiteLLM, Groq, …). Exported for tests.
+ */
+export function resolveOpenAICompatible(config: CLIConfig): {
+  baseURL: string;
+  apiKeyEnv: string;
+} {
+  const baseURL = (config.baseURL || "").trim().replace(/\/+$/, "");
+  if (!baseURL) {
+    throw new Error(
+      'provider "openai-compatible" requires "baseURL" in the config (e.g. "https://api.heyditto.ai/v1")',
+    );
+  }
+  return { baseURL, apiKeyEnv: config.apiKeyEnv || "OPENAI_COMPATIBLE_API_KEY" };
+}
+
 async function createModel(config: CLIConfig) {
   const provider = config.provider || "openai";
   const modelId = config.model || "gpt-4o-mini";
 
   // Dynamically import the AI SDK provider
   try {
+    if (provider === "openai-compatible") {
+      const { baseURL, apiKeyEnv } = resolveOpenAICompatible(config);
+      const apiKey = process.env[apiKeyEnv];
+      if (!apiKey) {
+        console.error(`Missing ${apiKeyEnv} for provider "openai-compatible" (${baseURL}).`);
+        process.exit(1);
+      }
+      const { createOpenAI } = await import("@ai-sdk/openai");
+      // `compatible` skips OpenAI-only request fields that other hosts reject.
+      const compat = createOpenAI({ baseURL, apiKey, compatibility: "compatible" });
+      return compat.chat(modelId);
+    }
+
     if (provider === "openai" || provider === "openrouter") {
       const { createOpenAI } = await import("@ai-sdk/openai");
       if (provider === "openrouter") {
@@ -163,7 +194,7 @@ async function createModel(config: CLIConfig) {
     }
 
     console.error(`Unknown provider: ${provider}`);
-    console.error("Supported: openai, openrouter, anthropic, google");
+    console.error("Supported: openai, openrouter, anthropic, google, openai-compatible");
     process.exit(1);
   } catch (err: any) {
     console.error(

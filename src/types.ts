@@ -92,8 +92,12 @@ export interface CLIConfig {
   localesDir?: string;
   /** AI SDK model identifier (e.g. "openai/gpt-4o-mini") */
   model?: string;
-  /** AI SDK provider (e.g. "openai", "anthropic") */
+  /** AI SDK provider: "openai" | "openrouter" | "anthropic" | "google" | "openai-compatible" */
   provider?: string;
+  /** Base URL for provider "openai-compatible" (e.g. "https://api.heyditto.ai/v1") */
+  baseURL?: string;
+  /** Env var holding the API key for "openai-compatible" (default: OPENAI_COMPATIBLE_API_KEY) */
+  apiKeyEnv?: string;
   /** Custom system prompt */
   systemPrompt?: string;
   /** Max keys per API call (default: 50) */
