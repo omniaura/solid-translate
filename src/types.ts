@@ -98,6 +98,12 @@ export interface CLIConfig {
   systemPrompt?: string;
   /** Max keys per API call (default: 50) */
   batchSize?: number;
+  /**
+   * Attempts per batch before its keys are reported as failed (default: 3).
+   * Retries use exponential backoff and target only the keys still missing;
+   * a batch that makes no progress is split in half and retried per half.
+   */
+  maxAttempts?: number;
   /** Files to translate directly (JSON, Markdown, MDX) */
   files?: {
     json?: { include: string[] };

@@ -409,6 +409,7 @@ on every pull request.
   "provider": "openrouter",
   "model": "openai/gpt-4o-mini",
   "batchSize": 50,
+  "maxAttempts": 3,
   "include": ["src/**/*.tsx", "src/**/*.ts"],
   "files": {
     "json": {
@@ -423,6 +424,20 @@ on every pull request.
   }
 }
 ```
+
+### Reliability: retries, splitting and batch size
+
+Every batch is retried with exponential backoff (default `maxAttempts: 3`), and each
+retry asks only for the keys the model has not translated yet. A batch that comes back
+with nothing usable — typically a response truncated mid-JSON — is split in half and
+each half recovers on its own, down to single keys. Only keys that fail every attempt
+are reported, and they are left out of the lock file so the next `translate` run
+retries exactly those.
+
+The output-token ceiling scales with both the number of keys and the amount of source
+text in the batch. If your strings are long paragraphs, a smaller `batchSize` (8–10)
+keeps each response well inside model limits and makes a single bad response cheap to
+retry.
 
 The `[locale]` placeholder is replaced with each target locale. Source files are found by replacing `[locale]` with the source locale.
 
