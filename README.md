@@ -406,7 +406,7 @@ on every pull request.
   "sourceLocale": "en",
   "targetLocales": ["es", "fr", "de"],
   "localesDir": "./src/locales",
-  "provider": "openrouter",
+  "provider": "openrouter",            // openai | openrouter | anthropic | google | openai-compatible
   "model": "openai/gpt-4o-mini",
   "batchSize": 50,
   "maxAttempts": 3,
@@ -424,6 +424,23 @@ on every pull request.
   }
 }
 ```
+
+### Any OpenAI-compatible host
+
+Point the CLI at a self-hosted gateway or an inference endpoint that speaks the
+OpenAI chat-completions API:
+
+```json
+{
+  "provider": "openai-compatible",
+  "baseURL": "https://api.heyditto.ai/v1",
+  "apiKeyEnv": "DITTO_TRANSLATE_KEY",
+  "model": "translate"
+}
+```
+
+`apiKeyEnv` names the environment variable that holds the key (default
+`OPENAI_COMPATIBLE_API_KEY`). The `model` is whatever id the host accepts.
 
 ### Reliability: retries, splitting and batch size
 
