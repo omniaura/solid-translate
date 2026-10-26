@@ -26,8 +26,12 @@ Write your app in one language. Wrap text in `<T>`. Get translations generated a
 
 ## Install
 
+v2 requires Solid 2.0 (`solid-js` and `@solidjs/web` `^2.0.0-rc.16`).
+Use v1 for Solid 1.x. The Vite integration targets Vite 8.
+
 ```bash
-bun add solid-translate
+bun add solid-translate solid-js@2.0.0-rc.18 @solidjs/web@2.0.0-rc.18
+bun add -d @solidjs/vite-plugin@3.0.0-next.51 vite@^8
 bun add -d ai @ai-sdk/openai  # or any AI SDK provider
 ```
 
@@ -38,7 +42,7 @@ bun add -d ai @ai-sdk/openai  # or any AI SDK provider
 ```ts
 // vite.config.ts
 import { defineConfig } from "vite";
-import solidPlugin from "vite-plugin-solid";
+import solidPlugin from "@solidjs/vite-plugin";
 import { solidTranslate } from "solid-translate/vite";
 import { createOpenAI } from "@ai-sdk/openai";
 
@@ -61,9 +65,14 @@ export default defineConfig({
 });
 ```
 
+Set `jsxImportSource` to `"@solidjs/web"` and `jsx` to `"preserve"` in
+`tsconfig.json`. Import `render` and renderer types such as `JSX` from
+`@solidjs/web`, not `solid-js/web` or `solid-js`.
+
 ### 2. Write your app
 
 ```tsx
+import { createSignal } from "solid-js";
 import { TranslationProvider, T, Var, Num, Plural, useTranslation, LocaleSelector } from "solid-translate";
 import translations from "virtual:solid-translate";
 
@@ -761,3 +770,24 @@ No hand-written `declare module` blocks needed.
 ## License
 
 MIT
+
+## Developing with Solid 2
+
+```bash
+bun install
+bun run build
+bun run test
+bun run typecheck
+bunx vite examples/solid2 --host 127.0.0.1 --port 5303
+```
+
+The example imports the built package and serves committed locale fixtures with
+`translate: false`: no provider keys, AI calls, extraction, or locale-file writes.
+Choose Español to load its dictionary lazily; change the name to verify translated
+dynamic slots stay reactive. `Loading` and `Errored` are Solid 2's async boundaries;
+locale dictionaries themselves retain the existing non-suspending behavior (source
+text while the dictionary loads, translated text once ready).
+
+Solid 2 batches writes automatically. `setLocale("es")` becomes visible after the
+reactive flush, not synchronously in the same handler. Keep reads in JSX or memos;
+use `onSettled` for DOM setup and return cleanup from effect apply functions.

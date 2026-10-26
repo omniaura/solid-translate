@@ -2,7 +2,7 @@
  * Runtime key-parity integration tests.
  *
  * Each fixture is compiled with the REAL Solid JSX compiler
- * (babel-preset-solid / dom-expressions), rendered into happy-dom with a
+ * (@solidjs/babel-plugin), rendered into happy-dom with a
  * translation dictionary keyed by whatever `extractStringsFromSource`
  * produced for the very same source — then we assert the translated text
  * actually appears. This proves extraction keys and runtime lookup keys
@@ -17,10 +17,8 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { extractStringsFromSource } from "../src/extract";
 
-// @ts-expect-error — no type declarations shipped
 import { transformAsync } from "@babel/core";
-// @ts-expect-error — no type declarations shipped
-import presetSolid from "babel-preset-solid";
+import solidPlugin from "@solidjs/babel-plugin";
 
 const FIXTURE_DIR = join(import.meta.dir, ".tmp-fixtures");
 mkdirSync(FIXTURE_DIR, { recursive: true });
@@ -31,7 +29,7 @@ afterAll(() => {
 let fixtureId = 0;
 
 /**
- * Compile a JSX snippet with babel-preset-solid, render it inside a
+ * Compile a JSX snippet with @solidjs/babel-plugin, render it inside a
  * TranslationProvider, and return the container plus the extracted keys.
  */
 async function renderFixture(
@@ -66,7 +64,7 @@ export default function Fixture(props) {
   }).map((e) => e.key);
 
   const compiled = await transformAsync(source, {
-    presets: [[presetSolid, { generate: "dom", hydratable: false }]],
+    plugins: [[solidPlugin, { generate: "dom", hydratable: false }]],
     filename: "fixture.tsx",
   });
 
@@ -74,7 +72,7 @@ export default function Fixture(props) {
   writeFileSync(path, compiled!.code!);
   const mod = await import(path);
 
-  const { render } = await import("solid-js/web");
+  const { render } = await import("@solidjs/web");
   const container = document.createElement("div");
   document.body.appendChild(container);
 
@@ -308,13 +306,13 @@ export default function Fixture(props) {
 }
 `;
     const compiled = await transformAsync(source, {
-      presets: [[presetSolid, { generate: "dom", hydratable: false }]],
+      plugins: [[solidPlugin, { generate: "dom", hydratable: false }]],
       filename: "fixture.tsx",
     });
     const path = join(FIXTURE_DIR, `fixture-${fixtureId++}.mjs`);
     writeFileSync(path, compiled!.code!);
     const mod = await import(path);
-    const { render } = await import("solid-js/web");
+    const { render } = await import("@solidjs/web");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
@@ -354,13 +352,13 @@ export default function Fixture(props) {
     expect(keys).toContain("Good morning");
 
     const compiled = await transformAsync(source, {
-      presets: [[presetSolid, { generate: "dom", hydratable: false }]],
+      plugins: [[solidPlugin, { generate: "dom", hydratable: false }]],
       filename: "fixture.tsx",
     });
     const path = join(FIXTURE_DIR, `fixture-${fixtureId++}.mjs`);
     writeFileSync(path, compiled!.code!);
     const mod = await import(path);
-    const { render } = await import("solid-js/web");
+    const { render } = await import("@solidjs/web");
     const container = document.createElement("div");
     document.body.appendChild(container);
     const dispose = render(
@@ -375,6 +373,7 @@ export default function Fixture(props) {
     );
     expect(out(container)).toBe("Buenos dias");
     (container.querySelector("#switch") as HTMLButtonElement).click();
+    await Promise.resolve();
     expect(out(container)).toBe("Bonjour");
     dispose();
     container.remove();

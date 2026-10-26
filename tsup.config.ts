@@ -1,11 +1,11 @@
 import { defineConfig } from "tsup";
-import { solidPlugin } from "esbuild-plugin-solid";
+import { transformAsync } from "@babel/core";
+import solid from "@solidjs/babel-plugin";
+import { readFile } from "node:fs/promises";
 
 export default defineConfig([
-  // Runtime entry (browser) — components, hooks, provider.
-  // JSX is compiled with babel-preset-solid so dist ships plain JS that any
-  // bundler (or node) can parse — consumers must NOT need vite-plugin-solid
-  // configured to compile our package.
+  // Compile runtime JSX with the Solid 2 compiler so consumers can use the
+  // published plain JS without compiling dependencies themselves.
   {
     entry: { index: "src/index.ts" },
     format: ["esm"],
@@ -13,8 +13,21 @@ export default defineConfig([
     sourcemap: true,
     clean: true,
     platform: "browser",
-    external: ["solid-js", "solid-js/web"],
-    esbuildPlugins: [solidPlugin()],
+    external: ["solid-js", "@solidjs/web"],
+    esbuildPlugins: [{
+      name: "solid-2",
+      setup(build) {
+        build.onLoad({ filter: /\.tsx$/ }, async ({ path }) => {
+          const result = await transformAsync(await readFile(path, "utf8"), {
+            filename: path,
+            plugins: [[solid, { generate: "dom" }]],
+            presets: [["@babel/preset-typescript", { allExtensions: true, isTSX: true }]],
+            sourceMaps: "inline",
+          });
+          return { contents: result!.code!, loader: "js" };
+        });
+      },
+    }],
   },
   // Vite plugin entry (node) — build-time translation
   {
