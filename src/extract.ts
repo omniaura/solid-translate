@@ -51,10 +51,9 @@ interface Node {
  * - `msg("text")` — shared string marker
  *
  * The produced keys have EXACT parity with the keys the runtime `<T>`
- * component builds after Solid's JSX compiler (babel-preset-solid /
- * dom-expressions) has processed the source:
+ * component builds after Solid's JSX compiler (@solidjs/babel-plugin) has processed the source:
  *
- * 1. JSX text is whitespace-collapsed exactly like dom-expressions'
+ * 1. JSX text is whitespace-collapsed exactly like the Solid compiler'
  *    `trimWhitespace`: `\r` removed; if the text contains a newline, every
  *    line after the first has leading whitespace stripped and
  *    whitespace-only lines are dropped, lines are joined with a single

@@ -24,4 +24,4 @@ export interface TranslationContextValue {
 // Shared context instance
 // ---------------------------------------------------------------------------
 
-export const TranslationContext = createContext<TranslationContextValue>();
+export const TranslationContext = createContext<TranslationContextValue | null>(null);
