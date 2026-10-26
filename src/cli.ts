@@ -7,6 +7,7 @@ import {
   writeFileSync,
   existsSync,
   mkdirSync,
+  realpathSync,
 } from "node:fs";
 import { resolve, join, dirname, relative, basename } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -661,7 +662,7 @@ async function translateLocaleFiles(
 }
 
 // Importing CLI helpers must not execute commands (or exit the test runner).
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);
