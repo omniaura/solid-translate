@@ -1,5 +1,6 @@
+import { render } from "@solidjs/web";
 import { describe, test, expect, beforeEach } from "bun:test";
-import { createRoot, createComponent } from "solid-js";
+import { createComponent, flush } from "solid-js";
 import {
   TranslationProvider,
   useTranslation,
@@ -14,16 +15,14 @@ function createProvider(props: Omit<TranslationProviderProps, "children">): {
   dispose: () => void;
 } {
   let ctx!: TranslationContextValue;
-  const dispose = createRoot((d) => {
+  const dispose = render(() =>
     createComponent(TranslationProvider, {
       ...props,
       get children() {
         ctx = useTranslation();
         return null;
       },
-    });
-    return d;
-  });
+    }), document.createElement("div"));
   return { ctx, dispose };
 }
 
@@ -40,6 +39,7 @@ describe("persistLocale", () => {
   test("disabled by default — setLocale does not write storage", () => {
     const { ctx, dispose } = createProvider({ translations });
     ctx.setLocale("es");
+    flush();
     expect(localStorage.getItem(DEFAULT_KEY)).toBeNull();
     dispose();
   });
@@ -83,6 +83,7 @@ describe("persistLocale", () => {
       persistLocale: true,
     });
     ctx.setLocale("es");
+    flush();
     expect(localStorage.getItem(DEFAULT_KEY)).toBe("es");
     expect(ctx.locale()).toBe("es");
     dispose();
@@ -96,6 +97,7 @@ describe("persistLocale", () => {
     });
     expect(ctx.locale()).toBe("es");
     ctx.setLocale("en");
+    flush();
     expect(localStorage.getItem("my-app:locale")).toBe("en");
     expect(localStorage.getItem(DEFAULT_KEY)).toBeNull();
     dispose();

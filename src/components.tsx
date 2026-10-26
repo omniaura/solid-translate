@@ -1,4 +1,5 @@
-import { useContext, type JSX, For, createMemo } from "solid-js";
+import type { JSX } from "@solidjs/web";
+import { useContext, For, createMemo } from "solid-js";
 import { TranslationContext } from "./context.js";
 
 // ---------------------------------------------------------------------------

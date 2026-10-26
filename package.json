@@ -1,7 +1,7 @@
 {
   "name": "solid-translate",
   "version": "1.6.0",
-  "description": "AI-powered build-time translations for SolidJS. Full i18n with <T>, <Var>, <Num>, <Currency>, <Plural>, <DateTime>, locale detection, and a CLI — all BYOK.",
+  "description": "AI-powered build-time translations for SolidJS. Full i18n with <T>, <Var>, <Num>, <Currency>, <Plural>, <DateTime>, locale detection, and a CLI \u2014 all BYOK.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -32,7 +32,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "bun test --conditions=browser",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run build",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "solid",
@@ -67,9 +68,10 @@
     "url": "https://github.com/omniaura/solid-translate/issues"
   },
   "peerDependencies": {
-    "solid-js": ">=1.7.0",
-    "vite": ">=4.0.0",
-    "ai": ">=3.0.0 <5.0.0"
+    "solid-js": "^2.0.0-rc.16",
+    "vite": ">=8.0.0",
+    "ai": ">=3.0.0 <5.0.0",
+    "@solidjs/web": "^2.0.0-rc.16"
   },
   "peerDependenciesMeta": {
     "vite": {
@@ -93,12 +95,15 @@
     "@semantic-release/git": "^10.0.1",
     "@types/bun": "latest",
     "ai": "^4.0.0",
-    "babel-preset-solid": "^1.9.12",
-    "esbuild-plugin-solid": "^0.6.0",
     "semantic-release": "25",
-    "solid-js": "^1.8.0",
+    "solid-js": "2.0.0-rc.18",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vite": "^5.0.0"
+    "vite": "8.0.16",
+    "@solidjs/web": "2.0.0-rc.18",
+    "@solidjs/babel-plugin": "2.0.0-rc.18",
+    "@solidjs/vite-plugin": "3.0.0-next.51",
+    "@babel/preset-typescript": "^7.26.0",
+    "@types/babel__core": "^7.20.5"
   }
 }

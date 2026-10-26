@@ -1,5 +1,6 @@
+import { render } from "@solidjs/web";
 import { describe, test, expect } from "bun:test";
-import { createRoot, createComponent } from "solid-js";
+import { createComponent, flush } from "solid-js";
 import {
   TranslationProvider,
   useTranslation,
@@ -14,16 +15,14 @@ function createProvider(props: Omit<TranslationProviderProps, "children">): {
   dispose: () => void;
 } {
   let ctx!: TranslationContextValue;
-  const dispose = createRoot((d) => {
+  const dispose = render(() =>
     createComponent(TranslationProvider, {
       ...props,
       get children() {
         ctx = useTranslation();
         return null;
       },
-    });
-    return d;
-  });
+    }), document.createElement("div"));
   return { ctx, dispose };
 }
 
@@ -87,6 +86,7 @@ describe("TranslationProvider with lazy manifest", () => {
     });
 
     ctx.setLocale("es");
+    flush();
     // Loader still pending — never throw, never suspend, show source text
     expect(ctx.locale()).toBe("es");
     expect(ctx.t("Hello world")).toBe("Hello world");
@@ -121,11 +121,15 @@ describe("TranslationProvider with lazy manifest", () => {
     });
 
     ctx.setLocale("es");
+    flush();
     ctx.setLocale("es");
+    flush();
     resolveEs({ "Hello world": "Hola mundo" });
     await tick();
     ctx.setLocale("en");
+    flush();
     ctx.setLocale("es");
+    flush();
     expect(esLoadCount()).toBe(1);
     expect(ctx.t("Hello world")).toBe("Hola mundo");
     dispose();
@@ -145,6 +149,7 @@ describe("TranslationProvider with lazy manifest", () => {
     });
 
     ctx.setLocale("es");
+    flush();
     await tick();
     expect(ctx.locale()).toBe("es");
     expect(ctx.t("Hello world")).toBe("Hello world");

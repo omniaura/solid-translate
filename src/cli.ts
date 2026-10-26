@@ -9,6 +9,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { resolve, join, dirname, relative, basename } from "node:path";
+import { pathToFileURL } from "node:url";
 import { translateBatch, translateMarkdown } from "./translate.js";
 import { hashContent } from "./hash.js";
 import {
@@ -659,7 +660,10 @@ async function translateLocaleFiles(
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Importing CLI helpers must not execute commands (or exit the test runner).
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

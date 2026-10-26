@@ -1,9 +1,9 @@
+import type { JSX } from "@solidjs/web";
 import {
-  createComponent,
   useContext,
   createSignal,
   createMemo,
-  type JSX,
+  untrack,
 } from "solid-js";
 import {
   TranslationContext,
@@ -164,7 +164,7 @@ export function TranslationProvider(props: TranslationProviderProps) {
 
   // Kick off loading for the initial locale (no-op in eager mode, or when
   // the locale has no loader — e.g. the source locale without a dict).
-  loadLocale(initialLocale);
+  untrack(() => loadLocale(initialLocale));
 
   const t = (
     key: string,
@@ -203,7 +203,7 @@ export function TranslationProvider(props: TranslationProviderProps) {
     translations: props.translations,
   };
 
-  return createComponent(TranslationContext.Provider, {
+  return TranslationContext({
     value,
     get children() {
       return props.children;
