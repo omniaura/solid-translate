@@ -89,6 +89,8 @@ export interface SyncOptions {
   sourceLocale: string;
   targetLocales: string[];
   batchSize: number;
+  /** Maximum simultaneous locale/batch requests. Default 1 (serial). */
+  concurrency?: number;
   translate: TranslateFn;
   /**
    * Context hints from auto-extraction (Vite). Omit to preserve existing
@@ -118,10 +120,21 @@ export async function syncLocaleFiles(
     sourceLocale,
     targetLocales,
     batchSize,
+    concurrency = 1,
     translate,
     contexts,
     log = () => {},
   } = options;
+
+  if (!Number.isInteger(batchSize) || batchSize < 1) {
+    throw new Error("batchSize must be a positive integer");
+  }
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 32) {
+    throw new Error("concurrency must be an integer from 1 to 32");
+  }
+  if (new Set(targetLocales).size !== targetLocales.length || targetLocales.includes(sourceLocale)) {
+    throw new Error("targetLocales must be unique and exclude sourceLocale");
+  }
 
   const sourceFilePath = join(localesDir, `${sourceLocale}.json`);
   if (!existsSync(sourceFilePath)) {
@@ -221,13 +234,14 @@ export async function syncLocaleFiles(
   const failures: SyncFailure[] = [];
   const failedKeys = new Set<string>();
 
+  // One worker pool for the entire run: concurrency never multiplies by
+  // locale count. Workers only mutate in-memory dictionaries. Each locale
+  // and the shared lock are written once, after all requests have settled.
+  const dictionaries = new Map<string, Record<string, string>>();
+  const tasks: (() => Promise<void>)[] = [];
   for (const targetLocale of targetLocales) {
-    const targetFilePath = join(localesDir, `${targetLocale}.json`);
-
-    // Load existing translations to preserve unchanged keys
-    const existing = readTargetFile(targetFilePath);
-
-    // Changed keys for every locale, plus this locale's healed keys
+    const existing = readTargetFile(join(localesDir, `${targetLocale}.json`));
+    dictionaries.set(targetLocale, existing);
     const localeEntries: Record<string, string> = { ...changedKeys };
     for (const key of missingByLocale[targetLocale] ?? []) {
       localeEntries[key] = sourceDict[key]!;
@@ -237,31 +251,33 @@ export async function syncLocaleFiles(
       const ctx = contextFor(key);
       if (ctx) localeContexts[key] = ctx;
     }
-
-    // Batch translate
     const entries = Object.entries(localeEntries);
     for (let i = 0; i < entries.length; i += batchSize) {
       const batch = Object.fromEntries(entries.slice(i, i + batchSize));
-      try {
-        const translated = await translate(
-          batch,
-          targetLocale,
-          localeContexts,
-        );
-        Object.assign(existing, translated);
-      } catch (err) {
-        failures.push({
-          locale: targetLocale,
-          keys: Object.keys(batch),
-          error: err,
-        });
-        for (const key of Object.keys(batch)) {
-          failedKeys.add(key);
+      tasks.push(async () => {
+        try {
+          const translated = await translate(batch, targetLocale, localeContexts);
+          // A provider callback may resolve with incomplete output. Never
+          // advance the lock for missing, blank, or unexpected translations.
+          for (const key of Object.keys(batch)) {
+            if (typeof translated[key] !== "string" || !translated[key]!.trim()) {
+              throw new Error(`Missing translation for ${key}`);
+            }
+          }
+          for (const key of Object.keys(batch)) existing[key] = translated[key]!;
+        } catch (error) {
+          failures.push({ locale: targetLocale, keys: Object.keys(batch), error });
+          for (const key of Object.keys(batch)) failedKeys.add(key);
         }
-      }
+      });
     }
-
-    writeTargetFile(targetFilePath, existing, sourceDict);
+  }
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, async () => {
+    while (next < tasks.length) await tasks[next++]!();
+  }));
+  for (const [targetLocale, existing] of dictionaries) {
+    writeTargetFile(join(localesDir, `${targetLocale}.json`), existing, sourceDict);
     log(`  ${targetLocale}: ${Object.keys(existing).length} keys`);
   }
 

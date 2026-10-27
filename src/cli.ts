@@ -512,6 +512,7 @@ async function runTranslate() {
     batchSize,
     config.systemPrompt,
     maxAttempts,
+    config.concurrency,
   );
 
   // 2. Translate additional file types (JSON, Markdown, MDX)
@@ -623,12 +624,14 @@ async function translateLocaleFiles(
   batchSize: number,
   systemPrompt?: string,
   maxAttempts?: number,
+  concurrency?: number,
 ) {
   const result = await syncLocaleFiles({
     localesDir,
     sourceLocale,
     targetLocales,
     batchSize,
+    concurrency,
     translate: (batch, targetLocale, contexts) =>
       translateBatch(
         model,

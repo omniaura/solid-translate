@@ -418,6 +418,7 @@ on every pull request.
   "provider": "openrouter",            // openai | openrouter | anthropic | google | openai-compatible
   "model": "openai/gpt-4o-mini",
   "batchSize": 50,
+  "concurrency": 4,
   "maxAttempts": 3,
   "include": ["src/**/*.tsx", "src/**/*.ts"],
   "files": {
@@ -450,6 +451,15 @@ OpenAI chat-completions API:
 
 `apiKeyEnv` names the environment variable that holds the key (default
 `OPENAI_COMPATIBLE_API_KEY`). The `model` is whatever id the host accepts.
+
+### Bounded parallel translation
+
+Set `concurrency` in the CLI or Vite config to run independent locale/batch
+requests together (1–32, default 1). The limit applies across the whole run,
+not once per locale. Start with 4 for a hosted provider. `batchSize` still
+controls keys per request; retries and splits stay inside the same worker.
+Locale dictionaries and the shared lock are written after the pool finishes.
+A failed batch still prevents its keys from advancing in the lock.
 
 ### Reliability: retries, splitting and batch size
 
