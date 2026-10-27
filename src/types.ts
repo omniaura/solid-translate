@@ -24,6 +24,8 @@ export interface SolidTranslatePluginConfig {
   systemPrompt?: string;
   /** Max keys per API call (default: 50) */
   batchSize?: number;
+  /** Maximum concurrent locale/batch requests, 1–32 (default 1). */
+  concurrency?: number;
   /**
    * Automatically extract translatable strings from source files.
    * Scans for `<T>` components and `msg()` calls, then writes
@@ -102,6 +104,8 @@ export interface CLIConfig {
   systemPrompt?: string;
   /** Max keys per API call (default: 50) */
   batchSize?: number;
+  /** Maximum concurrent locale/batch requests, 1–32 (default 1). */
+  concurrency?: number;
   /**
    * Attempts per batch before its keys are reported as failed (default: 3).
    * Retries use exponential backoff and target only the keys still missing;

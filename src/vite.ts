@@ -48,6 +48,7 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
     model,
     systemPrompt,
     batchSize = 50,
+    concurrency = 1,
     translate = true,
     autoExtract = false,
     include = ["src/**/*.tsx", "src/**/*.ts", "src/**/*.jsx"],
@@ -150,6 +151,7 @@ export function solidTranslate(config: SolidTranslatePluginConfig): Plugin {
         sourceLocale,
         targetLocales,
         batchSize,
+        concurrency,
         // Only pass extraction contexts when autoExtract ran; otherwise
         // preserve the contexts already recorded in the lock file.
         contexts: autoExtract ? contexts : undefined,
