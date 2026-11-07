@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   extractJsonObject,
   collectBatchTranslations,
+  placeholdersPreserved,
 } from "../src/translate";
 import { syncLocaleFiles, type TranslateFn } from "../src/lock";
 import { hashContent } from "../src/hash";
@@ -86,6 +87,61 @@ describe("collectBatchTranslations", () => {
     );
     expect(translations).toEqual({ translations: "traducciones" });
     expect(missing).toEqual([]);
+  });
+});
+
+describe("placeholdersPreserved", () => {
+  test("rejects a dropped closing brace before a Korean particle", () => {
+    expect(
+      placeholdersPreserved("Switch to {{account}}", "{{account}(으)로 전환"),
+    ).toBe(false);
+    expect(
+      placeholdersPreserved("Switch to {{account}}", "{{account}}(으)로 전환"),
+    ).toBe(true);
+  });
+
+  test("rejects a dropped brace before CJK punctuation", () => {
+    expect(placeholdersPreserved("{{title}}. Rest", "{{title}。残り")).toBe(
+      false,
+    );
+  });
+
+  test("rejects an extra brace and an invented placeholder", () => {
+    expect(placeholdersPreserved("Hi {{name}}", "Hola {{name}}}")).toBe(false);
+    expect(placeholdersPreserved("'s access", "o acesso de {0}")).toBe(false);
+    expect(placeholdersPreserved("Hi {{name}}", "Hola {{nombre}}")).toBe(false);
+  });
+
+  test("checks non-ASCII placeholder names", () => {
+    expect(placeholdersPreserved("Hi {{이름}}", "안녕 {{이름}}")).toBe(true);
+    expect(placeholdersPreserved("Hi {{이름}}", "안녕 {{성명}}")).toBe(false);
+  });
+
+  test("allows repeated and omitted placeholders", () => {
+    expect(
+      placeholdersPreserved("Plan of {0}. Only they can", "{0} の… {0} だけ"),
+    ).toBe(true);
+    expect(
+      placeholdersPreserved("Uploading {0} of {1} file{2}", "{1}개 중 {0}개"),
+    ).toBe(true);
+  });
+
+  test("keeps literal braces outside placeholders balanced with the source", () => {
+    expect(placeholdersPreserved("Use { and }", "Usa { y }")).toBe(true);
+    expect(placeholdersPreserved("Use { and }", "Usa y }")).toBe(false);
+  });
+});
+
+describe("collectBatchTranslations placeholder check", () => {
+  test("reports a malformed placeholder as missing and rejected", () => {
+    const { translations, missing, rejected } = collectBatchTranslations(
+      { "Switch to {{account}}": "{{account}(으)로 전환", Hello: "안녕" },
+      ["Switch to {{account}}", "Hello"],
+      { "Switch to {{account}}": "Switch to {{account}}", Hello: "Hello" },
+    );
+    expect(translations).toEqual({ Hello: "안녕" });
+    expect(missing).toEqual(["Switch to {{account}}"]);
+    expect(rejected).toEqual(["Switch to {{account}}"]);
   });
 });
 

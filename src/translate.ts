@@ -35,15 +35,73 @@ export function extractJsonObject(text: string): Record<string, unknown> {
 }
 
 /**
+ * Interpolation tokens the runtime substitutes: `{{name}}`, `{name}` and the
+ * `{0}` slot form. Matched as whole tokens so a malformed `{{name}` does not
+ * count as `{{name}}`. Names may be any non-space text (the runtime builds its
+ * matcher from the param key); any other brace is a literal kept as-is.
+ */
+const PLACEHOLDER_RE = /\{\{\s*[^{}\s]+\s*\}\}|\{[^{}\s]+\}/g;
+
+function placeholderShape(text: string): {
+  tokens: Set<string>;
+  strayOpen: number;
+  strayClose: number;
+} {
+  const tokens = new Set(text.match(PLACEHOLDER_RE) ?? []);
+  const rest = text.replace(PLACEHOLDER_RE, "");
+  let strayOpen = 0;
+  let strayClose = 0;
+  for (const ch of rest) {
+    if (ch === "{") strayOpen++;
+    else if (ch === "}") strayClose++;
+  }
+  return { tokens, strayOpen, strayClose };
+}
+
+/**
+ * True when a translation uses only placeholders that exist in the source and
+ * has the same braces outside them. Models occasionally drop a brace next to
+ * target-language particles or punctuation (Korean `{{account}(으)로`,
+ * Japanese `{{title}。`) or invent a placeholder the caller never passes;
+ * the runtime then shows the raw token, so such output is rejected and
+ * retried rather than written to the locale file.
+ *
+ * Repeating a placeholder is allowed (the runtime replaces every occurrence),
+ * and so is omitting one (e.g. an English plural-suffix slot a target
+ * language does not need). Exported for tests.
+ */
+export function placeholdersPreserved(
+  source: string,
+  translation: string,
+): boolean {
+  const src = placeholderShape(source);
+  const out = placeholderShape(translation);
+  if (out.strayOpen !== src.strayOpen || out.strayClose !== src.strayClose) {
+    return false;
+  }
+  for (const token of out.tokens) {
+    if (!src.tokens.has(token)) return false;
+  }
+  return true;
+}
+
+/**
  * Normalize a parsed model response into a translations dictionary limited to
  * the requested keys, and report which requested keys are missing (absent,
  * non-string, or empty). Unwraps a `{ "translations": { ... } }` envelope if
- * the model added one. Exported for tests.
+ * the model added one. When `sources` is given, a value whose placeholders or
+ * braces differ from its source is also reported missing (and listed in
+ * `rejected`) so the recovery loop retries it. Exported for tests.
  */
 export function collectBatchTranslations(
   parsed: Record<string, unknown>,
   requestedKeys: string[],
-): { translations: Record<string, string>; missing: string[] } {
+  sources?: Record<string, string>,
+): {
+  translations: Record<string, string>;
+  missing: string[];
+  rejected: string[];
+} {
   let dict = parsed;
   const inner = parsed["translations"];
   if (
@@ -58,15 +116,22 @@ export function collectBatchTranslations(
 
   const translations: Record<string, string> = {};
   const missing: string[] = [];
+  const rejected: string[] = [];
   for (const key of requestedKeys) {
     const value = dict[key];
-    if (typeof value === "string" && value.length > 0) {
-      translations[key] = value;
-    } else {
+    if (typeof value !== "string" || value.length === 0) {
       missing.push(key);
+      continue;
     }
+    const source = sources?.[key];
+    if (source !== undefined && !placeholdersPreserved(source, value)) {
+      missing.push(key);
+      rejected.push(key);
+      continue;
+    }
+    translations[key] = value;
   }
-  return { translations, missing };
+  return { translations, missing, rejected };
 }
 
 /** Tuning knobs for translateBatch's recovery loop. */
@@ -147,7 +212,7 @@ export async function translateBatch(
     `Translate text from "${sourceLocale}" to "${targetLocale}".`,
     `Rules:`,
     `- Preserve the original tone and meaning`,
-    `- Keep placeholders like {{variable}}, {variable}, {0}, {1} unchanged`,
+    `- Keep placeholders like {{variable}}, {variable}, {0}, {1} unchanged, with every brace, even next to particles or punctuation`,
     `- Keep HTML tags unchanged`,
     `- Do not add or remove content`,
     `- Return natural, idiomatic translations`,
@@ -185,7 +250,17 @@ export async function translateBatch(
       ].join("\n"),
       maxTokens: batchMaxTokens(subset),
     });
-    return collectBatchTranslations(extractJsonObject(text), subsetKeys);
+    const result = collectBatchTranslations(
+      extractJsonObject(text),
+      subsetKeys,
+      subset,
+    );
+    if (result.rejected.length > 0) {
+      log(
+        `translate ${targetLocale}: rejected ${result.rejected.length} translation(s) with altered placeholders or braces: "${result.rejected.slice(0, 3).join('", "')}"`,
+      );
+    }
+    return result;
   };
 
   const translations: Record<string, string> = {};

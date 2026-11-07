@@ -97,6 +97,27 @@ describe("translateBatch recovery", () => {
     expect(requestedKeys(prompts[2]!)).toEqual(["C", "D"]);
   });
 
+  test("a translation with a broken placeholder is retried, not accepted", async () => {
+    const key = "Switch to {{account}}";
+    const { model, prompts } = scriptedModel([
+      JSON.stringify({ [key]: "{{account}(으)로 전환", Hello: "안녕" }),
+      JSON.stringify({ [key]: "{{account}}(으)로 전환" }),
+    ]);
+    const logs: string[] = [];
+    const out = await translateBatch(
+      model,
+      { [key]: key, Hello: "Hello" },
+      "ko",
+      "en",
+      undefined,
+      undefined,
+      { sleep: noSleep, log: (m) => logs.push(m) },
+    );
+    expect(out).toEqual({ [key]: "{{account}}(으)로 전환", Hello: "안녕" });
+    expect(requestedKeys(prompts[1]!)).toEqual([key]);
+    expect(logs.some((m) => m.includes("altered placeholders"))).toBe(true);
+  });
+
   test("a thrown error (unparseable JSON, network) is retried with backoff", async () => {
     const slept: number[] = [];
     const { model, calls } = scriptedModel([
